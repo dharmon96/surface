@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { intake } from "../core/intake/match.js";
+import { fightersNamed } from "../core/intake/scheme.js";
 import { tokenise } from "../core/intake/tokens.js";
 import { planTranscodes, MAX_TEX } from "../core/intake/transcode.js";
 
@@ -14,6 +15,20 @@ describe("tokeniser on real promoter paths", () => {
   it("catches the 7a/8a folder-vs-file swap", () => { const e = tokenise("Fight Night/Walkouts/7a/8a_Tunnel_1.mov"); expect(e.bout).toBe(8); expect(e.conflicts.length).toBeGreaterThan(0); });
   it("ignores archive and layered-source folders", () => { expect(tokenise("Fight Night/Archieve(DONT USE)/Ribbons (Dont Use)/x.mov").ignored).toBeTruthy(); expect(tokenise("A/CEREMONY LAYERED FILES/x.png").ignored).toBeTruthy(); expect(tokenise("Fight Night/_Updates/Main Board/Winners/1a.mov").update).toBe(true); });
   it("reads full names and screen prefixes from the Matchroom layout", () => { const e = tokenise("VENUE SCREENS/WINNER/WINNER RUIZ/HUNG_WINNER RUIZ.mp4"); expect(e.kind).toBe("WINNER"); expect(e.names).toContain("ruiz"); expect(e.screenWords).toContain("hung"); });
+  it("keeps 'Holding' and 'Golden Boy' folders — 'old' only matches as a whole word", () => {
+    expect(tokenise("Fight Night/_Updates/Main Board/Holding/x.mov").ignored).toBeUndefined();
+    expect(tokenise("Golden Boy Promotions/Walkouts/1a.mov").ignored).toBeUndefined();
+    expect(tokenise("Fight Night/OLD/x.mov").ignored).toBeTruthy();
+    expect(tokenise("Newark Show/Walkouts/1a.mov").update).toBeUndefined();
+  });
+  it("a ringname supports identity but never stands in for the surname", () => {
+    // Glendale card has two Rodriguezes (Adrian b5 'Suavecito', Jesse b8 'Bam') — a bare surname must not pick one
+    const hits = fightersNamed(tokenise("Walkouts/5b/RODRIGUEZ barge.mov"), numbered.doc);
+    expect(hits.length).toBeGreaterThan(1); expect(hits.every((h) => h.strength < 0.8)).toBe(true);
+    // full name still resolves outright
+    const full = fightersNamed(tokenise("Walkouts/4a/CRISTIAN PEREZ barge.mov"), numbered.doc);
+    expect(full[0]?.strength).toBeGreaterThanOrEqual(0.8);
+  });
 });
 
 describe("numbered delivery (1a/1b) against an 8-bout sheet", () => {
@@ -30,7 +45,10 @@ describe("numbered delivery (1a/1b) against an 8-bout sheet", () => {
     expect(r.assignments.find((a) => a.slot === "B08_ROUND_07_MAIN_1920x1080")!.file).toBe("Fight Night/Rounds/1080 x 1920/7.mov"); // folder lies about size; pixels win
     expect(r.assignments.find((a) => a.slot === "B04_UP_NEXT_B05_BARGE_1792x504")!.file).toMatch(/Upnext\/5\.mov/);
     expect(r.assignments.find((a) => a.slot === "B05_TALE_MAIN_1920x1080")!.file).toMatch(/Midfights\/5\.mov/);
-    expect(r.ignored.length).toBe(6);
+    // 'Holding/' folders are hold loops, not archives — they must surface, not vanish
+    expect(r.ignored.length).toBe(0);
+    const holding = [...r.assignments.map((a) => a.file), ...r.unmatched.map((u) => u.file)].filter((f) => /\/Holding\//.test(f));
+    expect(holding.length).toBe(6);
   });
   it("prefers _Updates files and reports the replacement", () => {
     const r = intake(numbered.doc, numbered.manifest, numbered.probes, numbered.syn, { override: { direction: "opener-first", aIs: "red" } });
@@ -64,10 +82,17 @@ describe("Matchroom delivery (names in paths, fascia rasters)", () => {
   it("follows the filename, not the mislabeled folder, for CHAVES VS GARCIA", () => {
     const a = r.assignments.find((x) => x.slot === "B05_TALE_HUNG_1920x1080")!; expect(a.file).toMatch(/CHAVES VS GARCIA/);
   });
+  it("never fills a corner slot on a coin flip: a winner naming both fighters goes to confirm", () => {
+    for (const a of r.assignments.filter((x) => /WINNER_(RED|BLUE)/.test(x.slot)))
+      expect(a.file, `${a.slot} ← ${a.file}`).not.toMatch(/VS/i);
+    const both = r.unmatched.find((u) => /WINNER/.test(u.file) && / VS /i.test(u.file));
+    if (both) expect(both.why).toMatch(/corner unclear/);
+  });
   it("plans tiling for rasters wider than the GPU texture limit and strips stray audio", () => {
     const jobs = planTranscodes(r.assignments, matchroom.probes, matchroom.manifest, { engine: "resolume", outDir: "M" });
     const fascia = jobs.find((j) => /FASCIA_LO/.test(j.slot))!; expect(fascia.out.length).toBe(Math.ceil(28576 / MAX_TEX)); expect(fascia.action).toBe("encode+tile"); expect(fascia.args[1].join(" ")).toMatch(/crop=14288:64:14288:0/); // 28576/2 = 14288, already 4-aligned
     const winner = jobs.find((j) => /B08_WINNER_RED_HUNG/.test(j.slot))!; expect(winner.keepAudio).toBe(false); expect(winner.args[0]).toContain("-an"); expect(winner.codec).toBe("dxv");
-    expect(jobs.every((j) => j.deleteOriginal === false)).toBe(true);
+    // deletion is decided at execution time by the operator's checkbox; the per-job flag is only a veto
+    expect(jobs.every((j) => j.deleteOriginal === true)).toBe(true);
   });
 });

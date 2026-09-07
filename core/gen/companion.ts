@@ -36,7 +36,7 @@ function goActions(doc: ShowDoc, c: Cue, o: CompanionOpts): any[] {
     if (groups === "ALL") a.push(action("arena", "connectColumn", { lookupMode: "byIndex", action: "set", value: String(c.resolume.column) }, `arena${c.n}`));
     else for (const g of groups) a.push(action("arena", "connectLayerGroupColumn", { layerGroup: String(g), action: "set", value: String(c.resolume.column) }, `arena${c.n}g${g}`)); // one press, every group the cue touches
   }
-  if (c.d3) { const [maj, min] = c.d3.tag.split("."); a.push(action("d3", "cue", { int: Number(maj) * 100 + Number(min) }, `d3${c.n}`)); }
+  if (c.d3) { const [maj, min] = c.d3.tag.split("."); a.push(action("d3", "cue", { int: Number(maj) * 100 + Number(min) }, `d3${c.n}`)); } // maj*100+min is lossy ("8.11" and "81.1" collide) — verify the disguise-osc module's cue arg against a real d3 before trusting direct mode
   const round = c.id.match(/\.R(\d\d)$/); if (round) a.push(action("internal", "custom_variable_set_value", { name: "round", value: Number(round[1]) }, `rv${c.n}`));
   return a;
 }
@@ -48,27 +48,31 @@ export function companionPage(doc: ShowDoc, cues: Cue[], boutId: string, page: n
   const G: Record<string, Record<string, any>> = {};
   const put = (r: number, col: number, btn: any, cue?: Cue) => { (G[r] ??= {})[col] = btn; if (cue) cue.companion = { page, row: r, col }; };
   const last = (f: any) => String(f.name).split(" ").pop()!.toUpperCase();
+  // a pack that doesn't emit a given cue (fight-week has no walkouts/rounds) gets a dark, actionless button — never a crash
+  const btn = (label: string, bg: number, c: Cue | undefined, extra?: Parameters<typeof button>[3]) =>
+    c ? button(label, bg, goActions(doc, c, o), extra) : button(label, C.OFF, [], { color: 0x6b7079 });
   put(0, 0, button(`${last(red)}\\n${record(red)}`, C.RED, [], { size: "small" }));
-  put(0, 1, button("WALK\\nRED", C.RED, goActions(doc, K.WALK_RED, o)), K.WALK_RED);
-  put(0, 2, button("INTRO\\nRED", C.RED, goActions(doc, K.INTRO_RED, o)), K.INTRO_RED);
+  put(0, 1, btn("WALK\\nRED", C.RED, K.WALK_RED), K.WALK_RED);
+  put(0, 2, btn("INTRO\\nRED", C.RED, K.INTRO_RED), K.INTRO_RED);
   Object.entries(K).filter(([k]) => k.startsWith("FLAG_")).slice(0, 2).forEach(([k, c], i) => put(0, 3 + i, button(`FLAG\\n${k.slice(5)}`, C.GOLD, goActions(doc, c, o)), c));
-  put(0, 5, button("INTRO\\nBLUE", C.BLUE, goActions(doc, K.INTRO_BLUE, o)), K.INTRO_BLUE);
-  put(0, 6, button("WALK\\nBLUE", C.BLUE, goActions(doc, K.WALK_BLUE, o)), K.WALK_BLUE);
+  put(0, 5, btn("INTRO\\nBLUE", C.BLUE, K.INTRO_BLUE), K.INTRO_BLUE);
+  put(0, 6, btn("WALK\\nBLUE", C.BLUE, K.WALK_BLUE), K.WALK_BLUE);
   put(0, 7, button(`${last(blue)}\\n${record(blue)}`, C.BLUE, [], { size: "small" }));
   for (let r = 1; r <= 12; r++) {
     const [row, col] = r <= 8 ? [1, r - 1] : [2, r - 9];
     const c = K[`R${String(r).padStart(2, "0")}`];
     put(row, col, c ? button(`R ${r}`, C.GREY, goActions(doc, c, o), { feedbacks: roundFeedback(r) }) : button(`R ${r}`, C.OFF, [], { color: 0x6b7079 }), c);
   }
-  put(2, 4, button("FIGHT\\nBASE", C.DARK, goActions(doc, K.TALE, o)), K.TALE);
-  put(2, 5, button("WIN\\nRED", C.RED, goActions(doc, K.WIN_RED, o)), K.WIN_RED);
-  put(2, 6, button("WIN\\nBLUE", C.BLUE, goActions(doc, K.WIN_BLUE, o)), K.WIN_BLUE);
-  put(2, 7, button("DRAW", C.GOLD, goActions(doc, K.WIN_DRAW, o)), K.WIN_DRAW);
+  put(2, 4, btn("FIGHT\\nBASE", C.DARK, K.TALE), K.TALE);
+  put(2, 5, btn("WIN\\nRED", C.RED, K.WIN_RED), K.WIN_RED);
+  put(2, 6, btn("WIN\\nBLUE", C.BLUE, K.WIN_BLUE), K.WIN_BLUE);
+  put(2, 7, btn("DRAW", C.GOLD, K.WIN_DRAW), K.WIN_DRAW);
   const holds = cues.filter((c) => c.group === "EVT" && c.id.startsWith("EVT.HOLD_"));
   holds.slice(0, 3).forEach((c, i) => put(3, i, button(`HOLD\\n${c.id.slice(9)}`, C.DARK, goActions(doc, c, o)), c));
-  put(3, 4, b.order > 1 ? button(`◀ BOUT ${b.order - 1}`, C.DARK, [action("internal", "set_page", { page: page - 1 }, `pg${page}-`)]) : button("", C.OFF));
+  if (K.VT_OPEN) put(3, 3, button("FIGHT\\nOPEN", C.GOLD, goActions(doc, K.VT_OPEN, o)), K.VT_OPEN);
+  put(3, 4, b.order > 1 ? button(`◀ BOUT ${b.order - 1}`, C.DARK, [action("internal", "set_page", { controller: "self", page: page - 1 }, `pg${page}-`)]) : button("", C.OFF));
   put(3, 5, K.UP_NEXT ? button("UP NEXT", C.GREEN, goActions(doc, K.UP_NEXT, o)) : button("", C.OFF), K.UP_NEXT);
-  put(3, 6, K.UP_NEXT ? button(`BOUT ${b.order + 1} ▶`, C.DARK, [action("internal", "set_page", { page: page + 1 }, `pg${page}+`)]) : button("", C.OFF));
+  put(3, 6, K.UP_NEXT ? button(`BOUT ${b.order + 1} ▶`, C.DARK, [action("internal", "set_page", { controller: "self", page: page + 1 }, `pg${page}+`)]) : button("", C.OFF));
   put(3, 7, button("PANIC\\nBLACK", C.PANIC, o.mode === "bridge" ? [action("surface", "post", { url: `http://${o.surfaceHost ?? "127.0.0.1:8090"}/api/panic`, body: "", contenttype: "application/json" }, "panic")] : [action("arena", "compDisconnectAll", {}, "panic")]));
   const instances: Record<string, any> = o.mode === "bridge"
     ? { surface: { label: "surface", moduleId: "generic-http", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { prefix: "" } } }

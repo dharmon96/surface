@@ -1,4 +1,4 @@
-/** Hometown string -> ISO-3166 alpha-2 with a confidence. Never guesses silently: confidence < 1 lands in review flags. */
+/** Hometown string -> ISO-3166 alpha-2 with a confidence. Never guesses silently: confidence < 0.9 lands in review flags. */
 const US_STATES: Record<string, string> = {
   al: "Alabama", ak: "Alaska", az: "Arizona", ar: "Arkansas", ca: "California", co: "Colorado", ct: "Connecticut", de: "Delaware", fl: "Florida", ga: "Georgia", hi: "Hawaii", id: "Idaho", il: "Illinois", in: "Indiana", ia: "Iowa", ks: "Kansas", ky: "Kentucky", la: "Louisiana", me: "Maine", md: "Maryland", ma: "Massachusetts", mi: "Michigan", mn: "Minnesota", ms: "Mississippi", mo: "Missouri", mt: "Montana", ne: "Nebraska", nv: "Nevada", nh: "New Hampshire", nj: "New Jersey", nm: "New Mexico", ny: "New York", nc: "North Carolina", nd: "North Dakota", oh: "Ohio", ok: "Oklahoma", or: "Oregon", pa: "Pennsylvania", ri: "Rhode Island", sc: "South Carolina", sd: "South Dakota", tn: "Tennessee", tx: "Texas", ut: "Utah", vt: "Vermont", va: "Virginia", wa: "Washington", wv: "West Virginia", wi: "Wisconsin", wy: "Wyoming", dc: "Washington DC",
 };
@@ -12,8 +12,15 @@ export function countryFromHometown(hometown: string): Geo {
   const parts = hometown.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (!parts.length) return { country: null, confidence: 0, note: "empty hometown" };
   const last = parts[parts.length - 1];
-  if (COUNTRIES[last]) return { country: COUNTRIES[last], confidence: 1 };
-  if (US_STATES[last] || Object.values(US_STATES).some((s) => s.toLowerCase() === last)) return { country: "US", confidence: 0.95, note: "US inferred from state" };
+  const isState = !!US_STATES[last] || Object.values(US_STATES).some((s) => s.toLowerCase() === last);
+  if (COUNTRIES[last]) {
+    // "Georgia" is both a country and a US state — with a city in front, a US card almost always means the state
+    if (isState) return parts.length > 1
+      ? { country: "US", confidence: 0.7, note: `'${last}' is both a US state and a country — read as the state` }
+      : { country: COUNTRIES[last], confidence: 0.5, note: `'${last}' is both a country and a US state` };
+    return { country: COUNTRIES[last], confidence: 1 };
+  }
+  if (isState) return { country: "US", confidence: 0.95, note: "US inferred from state" };
   // "Las Vegas, Nevada/Honululu, Hawaii" style
   for (const p of parts) for (const k of Object.keys(COUNTRIES)) if (p.includes(k) && k.length > 3) return { country: COUNTRIES[k], confidence: 0.7, note: `matched '${k}' inside '${p}'` };
   return { country: null, confidence: 0, note: `could not resolve country for '${hometown}'` };

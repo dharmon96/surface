@@ -7,9 +7,12 @@
  *   fit "stretch"  fill the display (a screen that wants a standard 1920×1080 regardless of its pixel size)
  * Media: today the browser proxies (H.264 / VP9 alpha); the HAP GPU path (player/) replaces the <video> elements next.
  */
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { io } from "socket.io-client";
+
+/** the house amber, as a constant: the output window deliberately loads no CSS tokens or webfonts (it must render with nothing but itself) */
+const AMBER = "#f5b400";
 
 type Layer = { slot: string | null; url: string | null };
 interface OutScreen { id: string; name: string; w: number; h: number; x: number; y: number; cw: number; ch: number; rotation: number; testPattern: string | null; layers: Record<"BASE" | "OVERLAY" | "FULL", Layer> }
@@ -30,7 +33,7 @@ function Screen({ s, identify, test }: { s: OutScreen; identify: boolean; test: 
           ? <video key={u} src={u} autoPlay muted loop playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "fill" }} />
           : <img key={u} src={u} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />; })}
       {identify && (
-        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,.55)", color: "#fff", fontFamily: "system-ui, sans-serif", textAlign: "center", border: "4px solid #f5b400", boxSizing: "border-box" }}>
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,.55)", color: "#fff", fontFamily: "system-ui, sans-serif", textAlign: "center", border: `4px solid ${AMBER}`, boxSizing: "border-box" }}>
           <div><div style={{ fontSize: Math.max(24, Math.min(s.cw, s.ch) / 5), fontWeight: 700 }}>{s.id}</div><div style={{ fontSize: Math.max(12, Math.min(s.cw, s.ch) / 14), opacity: .8 }}>{s.name} · {s.w}×{s.h} @ {s.x},{s.y}</div></div>
         </div>)}
     </div>
@@ -56,7 +59,7 @@ function OutputPage() {
   return (
     <div style={{ position: "absolute", left: ox, top: oy, width: out.w, height: out.h, transform: `scale(${sx}, ${sy})`, transformOrigin: "top left", background: "#000", overflow: "hidden" }}>
       {out.screens.map((s) => <Screen key={s.id} s={s} identify={identify} test={test} />)}
-      {identify && <div style={{ position: "absolute", left: 8, top: 8, color: "#f5b400", fontFamily: "system-ui, sans-serif", fontSize: 14, background: "rgba(0,0,0,.6)", padding: "4px 8px" }}>{out.name} · {out.w}×{out.h} · {fit}</div>}
+      {identify && <div style={{ position: "absolute", left: 8, top: 8, color: AMBER, fontFamily: "system-ui, sans-serif", fontSize: 14, background: "rgba(0,0,0,.6)", padding: "4px 8px" }}>{out.name} · {out.w}×{out.h} · {fit}</div>}
     </div>
   );
 }

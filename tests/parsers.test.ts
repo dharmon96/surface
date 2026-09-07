@@ -36,7 +36,7 @@ describe("timing sheet parser", () => {
     expect(v.data.fighters[v.data.bouts[5].blue].name).toBe("Jarrell Miller"); expect(v.data.fighters[v.data.bouts[5].blue].weightLbs).toBeNull();
     expect(v.review.flags.some((f) => /HVY/.test(f))).toBe(true);
   });
-  it("feeds the Fight Night pack directly", () => { expect(deriveCues(d).length).toBe(161); }); // 157 + 2 suggested anthem cues (bout 7) + pre-show up-next
+  it("feeds the Fight Night pack directly", () => { expect(deriveCues(d).length).toBe(163); }); // 157 + 2 suggested anthem cues (bout 7) + pre-show up-next + fight opens (main, co-main)
 });
 
 describe("bout sheet parser", () => {
@@ -52,6 +52,51 @@ describe("bout sheet parser", () => {
     const main = d.data.bouts[9]; expect(d.data.fighters[main.red].name).toBe("Alexis Rocha"); expect(main.title).toMatch(/NABO & NABF/);
     expect(d.data.bouts[8].isCoMain).toBe(true); expect(d.event.broadcast?.network).toBe("DAZN");
     expect(d.data.fighters[d.data.bouts[6].red].country).toBe("UZ");
+  });
+  it("with no corner header, the assumption made matches the flag (RED left)", () => {
+    const noHeader = rocha.split(/\r?\n/).slice(1).join("\n");
+    const d = parseBoutSheet(noHeader);
+    // the rocha sheet really is RED-left, so the default must reproduce the with-header corners
+    const withHeader = parseBoutSheet(rocha);
+    const main = d.data.bouts[9], mainH = withHeader.data.bouts[9];
+    expect(d.data.fighters[main.red].name).toBe(withHeader.data.fighters[mainH.red].name);
+    expect(d.review.flags.some((f) => /No RED\/BLUE CORNER header — assumed RED left/.test(f))).toBe(true);
+  });
+  it("flags a header that names only one corner instead of silently deciding", () => {
+    const oneCorner = rocha.replace(/BLUE CORNER/, "");
+    const d = parseBoutSheet(oneCorner);
+    expect(d.review.flags.some((f) => /names only the RED corner/.test(f))).toBe(true);
+  });
+});
+
+describe("corner defaults on timing sheets", () => {
+  it("with no corner header, the assumption made matches the flag (BLUE left)", () => {
+    const noHeader = glendale.replace(/BLUE CORNER.*RED CORNER.*$/m, "");
+    const d = parseTimingSheet(noHeader);
+    const withHeader = parseTimingSheet(glendale);
+    const main = d.data.bouts[7], mainH = withHeader.data.bouts[7];
+    expect(d.data.fighters[main.red]?.name).toBe(withHeader.data.fighters[mainH.red].name);
+    expect(d.review.flags.some((f) => /assumed BLUE left, RED right/.test(f))).toBe(true);
+  });
+  it("flags a missing walk/intro annotation instead of silently assuming", () => {
+    const noParens = glendale.replace(/\(Walk, Intro 2nd\)/, "").replace(/\(Walk, Intro 1st\)/, "");
+    const d = parseTimingSheet(noParens);
+    expect(d.event.walkOrder).toEqual(["red", "blue"]);
+    expect(d.review.flags.some((f) => /Walk\/intro order not annotated/.test(f))).toBe(true);
+  });
+  it("reads split walk/intro annotations per kind", () => {
+    const split = glendale.replace("(Walk, Intro 2nd)", "(Walk 1st, Intro 2nd)").replace("(Walk, Intro 1st)", "(Walk 2nd, Intro 1st)");
+    const d = parseTimingSheet(split);
+    expect(d.event.walkOrder).toEqual(["blue", "red"]); expect(d.event.introOrder).toEqual(["red", "blue"]);
+  });
+});
+
+describe("country resolution", () => {
+  it("reads 'Atlanta, Georgia' as the US state, flagged — not the country", () => {
+    const doc = parseBoutSheet(rocha.replace("Santa Ana, CA", "Atlanta, Georgia"));
+    const f = Object.values(doc.data.fighters).find((x: any) => x.hometown === "Atlanta, Georgia") as any;
+    expect(f.country).toBe("US");
+    expect(doc.review.flags.some((fl) => /both a US state and a country/.test(fl))).toBe(true);
   });
 });
 

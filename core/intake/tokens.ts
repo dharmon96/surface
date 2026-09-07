@@ -38,8 +38,9 @@ const KIND_WORDS: Record<GraphicKind, RegExp> = {
 const KIND_ORDER: GraphicKind[] = ["UP_NEXT", "WALKOUT", "WINNER", "ROUND", "TALE", "HOLD", "FLAG", "VT", "FIGHTER"]; // specific before generic
 
 export const SCREEN_WORDS = /\b(hung|centerhung|center\s?hung|main\s?(video)?\s?boo?ards?|main\s?video|main\s?board|scoreboard|full\s?bu?arge|barge|ribbons?|fascia|upper|lower|led|truss|wedge|signage|corner\s?(boards?|posts?)?|tunnel|imag|screens?|render|board|post|video)\b/gi;
-const IGNORE_DIR = /(archi?e?ve|dont\s*use|do\s*not\s*use|old|layered|links|source|psd|ai files)/i;
-const UPDATE_DIR = /(_?updates?|revis(ed|ions?)|v\d+|new|final)/i;
+// anchored on separators so 'old' never matches inside Holding/Golden/Folder, 'final' never inside a clip name like final_v3.mov's stem-neighbour words
+const IGNORE_DIR = /(^|[\s_\-.()[\]])(archi?e?ves?|dont\s*use|do\s*not\s*use|old|layered|links?|sources?|psds?|ai\s*files)(?=$|[\s_\-.()[\]])/i;
+const UPDATE_DIR = /(^|[\s_\-.()[\]])(_?updates?|revis(ed|ions?)|v\d{1,3}|finals?)(?=$|[\s_\-.()[\]])/i;
 
 const norm = (s: string) => s.replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -59,10 +60,11 @@ export function tokenise(path: string, probe?: Probe): FileEvidence {
     const noRes = t.replace(/(\d{3,5})\s*[x×]\s*(\d{2,5})/gi, " ");
     // bout+side: "3a", "3 b", "bout 3 red", "fight 3"
     const bs = noRes.match(/\b(?:bout|fight)?\s*(\d{1,2})\s*([ab])\b/i) ?? noRes.match(/\b(\d{1,2})([ab])\b/i);
-    if (bs) { const b = +bs[1], s = bs[2].toLowerCase() as "a" | "b"; if (ev.bout !== undefined && ev.bout !== b && ev.boutFrom !== from) ev.conflicts.push(`${from} says bout ${b}${s}, ${ev.boutFrom} says bout ${ev.bout}${ev.side ?? ""}`); if (ev.bout === undefined || from === "file") { ev.bout = b; ev.boutFrom = from; ev.side = s; ev.sideFrom = from; } }
-    const rb = noRes.match(/\b(red|blue)\b/i); if (rb && !ev.side) { ev.side = rb[1].toLowerCase() as any; ev.sideFrom = from; }
+    if (bs) { const b = +bs[1], s = bs[2].toLowerCase() as "a" | "b"; if (ev.bout !== undefined && (ev.bout !== b || ev.side !== s)) ev.conflicts.push(`${from} says bout ${b}${s}, ${ev.boutFrom} says bout ${ev.bout}${ev.side ?? ""}`); if (ev.bout === undefined || from === "file") { ev.bout = b; ev.boutFrom = from; ev.side = s; ev.sideFrom = from; } }
+    const rb = noRes.match(/\b(red|blue)\b/i);
+    if (rb) { const s = rb[1].toLowerCase() as "red" | "blue"; if ((ev.side === "red" || ev.side === "blue") && ev.side !== s) ev.conflicts.push(`${ev.sideFrom} says ${ev.side}, ${from} says ${s}`); if (!ev.side) { ev.side = s; ev.sideFrom = from; } }
     // kind
-    for (const k of KIND_ORDER) if (KIND_WORDS[k].test(noRes)) { if (ev.kind === "UNKNOWN" || from === "file" && ev.kindFrom === "dir" && k !== "FIGHTER") { ev.kind = k; ev.kindFrom = from; } break; }
+    for (const k of KIND_ORDER) if (KIND_WORDS[k].test(noRes)) { if (ev.kind === "UNKNOWN" || from === "file" && ev.kindFrom === "dir" && k !== "FIGHTER") { if (ev.kind !== "UNKNOWN" && ev.kind !== k) ev.conflicts.push(`folder says ${ev.kind}, file says ${k}`); ev.kind = k; ev.kindFrom = from; } break; }
     // round number: "round 7", "r7", "rd 7", or a bare number inside a Rounds folder
     const rn = noRes.match(/\b(?:round|rnd|rd|r)\s*(\d{1,2})\b/i); if (rn) ev.round = +rn[1];
     // screen words

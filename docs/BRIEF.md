@@ -52,12 +52,12 @@ the norm, templates are the fallback); no dynamic audio processing (level matchi
 | what | where |
 |---|---|
 | Source of truth (git) | `D:\AI\surface` on darian-pc (no GitHub remote yet; intended `dharmon96/surface`) |
-| Cloud working copy (this session's) | `/home/claude/boutkit-repo` — synced to the PC by tarball + `device_commit_files`, then `git commit` on the PC |
+| CLI | `cli/surface.ts` (`npm run cli -- parse|merge|cues|build|intake`) |
 | Sibling repos on the PC | `D:\AI\web` (MantaGlow site: `seed-apps` surface entry, `/apps/surface` page), `D:\AI\darian-infra` (droplet deploy; Caddy `surface.mantaglow.com` → GitHub release installers), `D:\AI\showcall`, `D:\AI\pixel-mapper-v2` |
 | Example deliveries | `D:\AI\examples` (103 GB, git-ignored as `examples/`); surveyed in `fixtures/examples-survey/` |
 | Sheet fixtures | `fixtures/text/*.txt` (pdftotext output), `fixtures/2026-06-13-glendale.bout.json` |
 | App data at runtime | `%APPDATA%/Surface` (Electron userData): `projects/<id>/show.json`, `index.json`, `active.json`, `hub.json`, `surface.config.json`, `surface-thumbs/`, `surface-proxies/` |
-| Docs | `CLAUDE.md` (reference), `docs/BRIEF.md` (this), `docs/HUB.md` (account + sync), `docs/PLAYER.md` (playback roadmap), `docs/card-board-mockup.html` |
+| Docs | `CLAUDE.md` (reference), `docs/BRIEF.md` (this), `docs/HUB.md` (account + sync), `docs/PLAYER.md` (playback roadmap), `docs/VISION.md` (UX + console roadmap), `docs/card-board-mockup.html` |
 | Published artifacts (Claude) | "BoutKit Build Plan" v3, Card Board mockup, "Surface Player" plan |
 
 Run it: `npm install` (on the OS you run on — a Linux-VM install breaks Windows), `npm run build`, `npm run app`.
@@ -95,7 +95,9 @@ e.g. `B03_WALK_RED_MAIN_LED_3840x1080`, `EVT_HOLD_SPONSOR_RIBBON_7680x216`, `EVT
 **Cues** (`Cue`): `n` (== Resolume column, stable once published — never renumber), `id` like `B08.R01`, `scope`
 (surfaces or ALL), per-surface layer actions on `BASE` / `OVERLAY` / `FULL`, behaviour (`loop`, `playHold` for VTs and
 winner stings, `timed` for round cards, `playToMarker` for the weigh-in scale), `transition` (cut / fade / stinger /
-dve), `follow`. The last cue is always `EVT.TEST` — every screen's own test pattern.
+dve), `follow`. The last cue is always `EVT.TEST` — every screen's own test pattern (all three packs; custom cues are
+inserted before it). Once a composition is built, cue numbers are pinned (`doc.build.cueNumbers`) — a later sheet change
+never repoints published columns; new cues take the next free ones.
 
 **Packs** derive cues from `data`: `boxing-fightnight` (holds, up-next, walkouts, tale, rounds, winner, flags, VTs),
 `boxing-fightweek` (press conference: LED tables carry one fighter each; weigh-in: scale surface plays to a marker).
@@ -164,7 +166,9 @@ Express + Socket.IO in one process (`server/index.ts`), started by Electron with
   `GET/PUT /api/outputs`, `GET /api/outputs/:id`, `POST /api/outputs/signal`, `GET /api/venue`.
 - Engines/build: `GET/PUT /api/engines`, `POST /api/engines/test`, `POST /api/build/resolume`, `POST /api/bundle`.
 - Run (also the Bridge API Companion's generic-http buttons call): `POST /api/cue/:n/go`, `/api/next`, `/api/prev`,
-  `/api/panic`, `/api/text/:key`, `/api/media/ended`. Socket events: `state`, `fired`, `revert`, `error`, `show`,
+  `/api/panic`, `/api/text/:key`, `/api/media/ended`; `GET /api/clock` = the clip clock (remaining time of every
+  non-looping clip on the walls; `clock.html` renders it — its own window from the Run bar, or a laptop on the venue
+  network when the server runs with `--bind 0.0.0.0`). Socket events: `state`, `fired`, `revert`, `error`, `show`,
   `transcode`, `proxy`, `build`, `output`.
 - Projects + hub: `server/projects.ts` (`ProjectStore`), `GET /api/hub/status`, `POST /api/hub/token|signout`,
   `GET/POST /api/projects`, `/api/projects/import|sample|sync`, `/api/projects/:id/open`, `DELETE /api/projects/:id`.
@@ -205,15 +209,15 @@ The GPU-native path for Play mode: `Movie` reads only a MOV's index (mp4box) and
 ## 6. Conventions that matter
 
 - Core is pure TypeScript (data in, data out); I/O only in `core/intake` (ffmpeg/ffprobe/tesseract), `core/gen/cuesheet`
-  (exceljs) and `server/`. Everything is unit-testable and shared by CLI, desktop and hub.
+  (exceljs), `core/index.ts` `buildBundle`, the network adapters/hub client (injectable fetch), and `server/`.
+  Everything is unit-testable and shared by CLI, desktop and hub.
 - Generators emit operation lists; adapters execute or serialise them, so a card change is a diff.
 - Cue numbers and screen ids are stable once published. Fighter ids never change across sheet versions.
 - Every inference is a flag. Confirmations are cheap; wrong graphics on a wall are not.
 - UI copy is the operator's language (walkout, tale, holds), not the system's (slot, adapter).
 - Verify engine behaviour against module source or docs before adding an action or endpoint; record it under
   "Engine facts" in `CLAUDE.md`.
-- Sync ritual with the PC: tar (exclude node_modules/.git/dist/dist-server/release/out/examples) → commit to `D:\AI`
-  → extract over `D:\AI\surface` → `git commit` as Darian → `find .git -name '*.lock' -delete`. Tell Darian when
+- Sessions now work directly in `D:\AI\surface` on the PC (the old tarball sync ritual is retired). Tell Darian when
   `package.json` changed so he runs `npm install` on Windows.
 
 ## 7. Status and what is next (Sep 2026)

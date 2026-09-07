@@ -10,7 +10,7 @@ export function resolve(doc: ShowDoc, cues: Cue[]): Cue[] {
   const all = expandScope(doc, ["ALL"]);
   return cues.map((c) => {
     const scope = expandScope(doc, c.scope);
-    if (!c.transition && doc.transitions) { const g = c.id.split(".")[1]?.replace(/_(RED|BLUE|DRAW|B\d+|\d+|[A-Z]{2})$/, "").replace(/^R\d\d$/, "ROUND").replace(/^WIN$/, "WINNER").replace(/^WALK$/, "WALKOUT").replace(/^INTRO$/, "FIGHTER"); const t = doc.transitions[g ?? ""] ?? doc.transitions["*"]; if (t?.startsWith("stinger:")) c = { ...c, transition: { kind: "stinger", stinger: t.slice(8) } }; else if (t?.startsWith("fade:")) c = { ...c, transition: { kind: "fade", sec: Number(t.slice(5)) } }; }
+    if (!c.transition && doc.transitions) { const g = c.id.split(".")[1]?.replace(/^(HOLD|VT|UP_NEXT)_.*$/, "$1").replace(/_(RED|BLUE|DRAW|B\d+|\d+|[A-Z]{2})$/, "").replace(/^R\d\d$/, "ROUND").replace(/^WIN$/, "WINNER").replace(/^WALK$/, "WALKOUT").replace(/^INTRO$/, "FIGHTER"); const t = doc.transitions[g ?? ""] ?? doc.transitions["*"]; if (t?.startsWith("stinger:")) c = { ...c, transition: { kind: "stinger", stinger: t.slice(8) } }; else if (t?.startsWith("fade:")) c = { ...c, transition: { kind: "fade", sec: Number(t.slice(5)) } }; }
     const isAll = all.length === scope.length && all.every((s) => scope.includes(s));
     return {
       ...c,
@@ -21,14 +21,19 @@ export function resolve(doc: ShowDoc, cues: Cue[]): Cue[] {
   });
 }
 
-/** Merge custom cues (rundown / hand-added) after pack cues; they take the next free numbers. */
+/** Merge custom cues (rundown / hand-added) after pack cues; they take the next free numbers.
+ *  EVT.TEST stays the very last cue — "the last cue is always the test patterns" is a promise the operator relies on. */
 export function withCustomCues(pack: Cue[], custom: Partial<Cue>[] = []): Cue[] {
-  let n = pack.length;
+  const test = pack.find((c) => c.id === "EVT.TEST");
+  const head = test ? pack.filter((c) => c !== test) : pack;
+  let n = head.length;
   const extra = custom.map((c) => ({
     n: ++n, id: c.id ?? `CUSTOM.${n}`, group: c.group ?? "CUSTOM", name: c.name ?? `Cue ${n}`, origin: c.origin ?? "custom",
     scope: c.scope ?? ["ALL"], targets: c.targets ?? [], ...c,
   })) as Cue[];
-  return [...pack, ...extra];
+  // custom cues may carry their own n (rundown import) — EVT.TEST takes the next free number after everything
+  const maxN = Math.max(n, ...extra.map((c) => c.n));
+  return test ? [...head, ...extra, { ...test, n: maxN + 1 }] : [...head, ...extra];
 }
 
 /** Legacy bout.json (boutkit/1.0, Python prototype) -> ShowDoc 2.0 */

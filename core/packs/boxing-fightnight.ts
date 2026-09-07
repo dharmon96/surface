@@ -4,7 +4,8 @@
  *
  * Numbering is FIXED and must not change once a bundle has been handed out:
  *   event : HOLD_1..n (0.1..), FLAG_<CC> (0.10+), VT_* (0.20+)
- *   bout N: WALK (N.1, N.2) · anthems (N.3, N.4) · INTRO (N.5, N.6) · TALE (N.7)
+ *   bout N: VT_OPEN (N.8, main + co-main: the hype video that rolls before the walks) · WALK (N.1, N.2) ·
+ *           anthems (N.3, N.4) · INTRO (N.5, N.6) · TALE (N.7)
  *           ROUND r (N.(10+r)) · WINNER RED/BLUE/DRAW (N.90/91/92) · UP_NEXT (N.95) · HOLD (N.99)
  *
  * Layer semantics (from how Darian runs them):
@@ -85,6 +86,11 @@ export const boxingFightNight: Pack = {
       const F = (side: "red" | "blue") => (side === "red" ? red : blue);
       const bt = (k: string, extra?: Partial<Cue>) => ({ group: b.id, origin: "pack" as const, timing: b.timing?.[k], ...extra });
 
+      // the fight open: the hype VT that sometimes rolls before the main (and co-main) walks — house lights down, video up
+      if (b.isMain || b.isCoMain) {
+        const t = targets(doc, "VT", b.id, "OPEN", "FULL", HOLD_LAST, `${red.name} v ${blue.name} — fight open`);
+        add({ id: `${b.id}.VT_OPEN`, name: `Fight open — ${red.name} v ${blue.name}`, ...bt("walk"), ...t, trigger: "Roll the open (before the first walk)", follow: { onMediaEnd: true, next: "revertBase" }, d3: { tag: `${N}.8`, transports: t.scope } });
+      }
       walkOrder.forEach((side, k) => {
         const f = F(side);
         const t = targets(doc, "WALKOUT", b.id, side.toUpperCase(), "FULL", LOOP, f.name);

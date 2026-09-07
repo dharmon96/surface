@@ -16,7 +16,7 @@ export function measureLoudness(file: string, ffmpeg = "ffmpeg"): Promise<Loudne
       const tail = s.slice(i); const num = (re: RegExp) => { const m = tail.match(re); return m ? Number(m[1]) : NaN; };
       const integrated = num(/I:\s*(-?[\d.]+)\s*LUFS/), peak = num(/Peak:\s*(-?[\d.]+)\s*dBFS/), lra = num(/LRA:\s*(-?[\d.]+)\s*LU/);
       if (!Number.isFinite(integrated) || integrated < -60) return resolve(null); // silence / no usable programme
-      resolve({ integratedLufs: integrated, truePeakDb: Number.isFinite(peak) ? peak : 0, lra: Number.isFinite(lra) ? lra : undefined });
+      resolve({ integratedLufs: integrated, truePeakDb: Number.isFinite(peak) ? peak : NaN, lra: Number.isFinite(lra) ? lra : undefined }); // NaN = peak unknown, never a fake 0 dBFS
     });
   });
 }
@@ -24,7 +24,8 @@ export function measureLoudness(file: string, ffmpeg = "ffmpeg"): Promise<Loudne
 /** the one number: gain that lands the clip on the target, held back so true peak stays under the ceiling */
 export function levelMatch(l: Loudness, targetLufs = -18, ceilingDbTp = -1): LevelMatch {
   let gain = targetLufs - l.integratedLufs; let capped = false;
-  if (l.truePeakDb + gain > ceilingDbTp) { gain = ceilingDbTp - l.truePeakDb; capped = true; }
+  // an unknown peak means "don't cap", never "cap as if the peak were 0 dBFS"
+  if (Number.isFinite(l.truePeakDb) && l.truePeakDb + gain > ceilingDbTp) { gain = ceilingDbTp - l.truePeakDb; capped = true; }
   return { ...l, targetLufs, gainDb: Math.round(gain * 10) / 10, capped };
 }
 export const linearGain = (db: number) => Math.pow(10, db / 20);

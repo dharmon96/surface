@@ -40,10 +40,14 @@ function startServer(show, cfg) {
 async function createWindow() {
   const { show, cfg } = ensureDefaults();
   const ok = await startServer(show, cfg);
-  const win = new BrowserWindow({ width: 1500, height: 940, backgroundColor: "#0c0e12", title: "Surface", webPreferences: { contextIsolation: true, preload: path.join(__dirname, "preload.cjs") } });
+  const win = new BrowserWindow({ width: 1500, height: 940, backgroundColor: "#0c0e12", title: "Surface", webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, "preload.cjs") } });
   if (!ok) dialog.showErrorBox("Surface", `The show server did not start on port ${PORT}. Check the console output.`);
   await win.loadURL(DEV ? "http://localhost:3009/" : `http://127.0.0.1:${PORT}/`);
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
+  // the console must never navigate off its own origin (a dropped file or rogue link would carry window.surface with it)
+  win.webContents.on("will-navigate", (e, url) => { const own = DEV ? "http://localhost:3009" : `http://127.0.0.1:${PORT}`; if (!url.startsWith(own)) { e.preventDefault(); shell.openExternal(url); } });
+  // closing the console closes every output window with it (there is no app.on("browser-window-closed") in Electron)
+  win.on("closed", () => { for (const w of outputWins.values()) if (!w.isDestroyed()) w.close(); });
   const menu = Menu.buildFromTemplate([
     { label: "Show", submenu: [
       { label: "Import show.json as a project…", click: async () => { const r = await dialog.showOpenDialog(win, { filters: [{ name: "Surface show", extensions: ["json"] }], properties: ["openFile"] }); if (!r.canceled) { const doc = JSON.parse(fs.readFileSync(r.filePaths[0], "utf8")); const res = await fetch(`http://127.0.0.1:${PORT}/api/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc }) }); if (!res.ok) dialog.showErrorBox("Surface", `Could not import: ${await res.text()}`); win.reload(); } } },
@@ -74,6 +78,7 @@ ipcMain.handle("hub-signin", async (ev) => {
   const existing = await hubCookie(); if (existing) { const r = await handToServer(tokenFromCookie(existing)); if (r.status === 200) return r.body; }
   const parent = BrowserWindow.fromWebContents(ev.sender);
   const w = new BrowserWindow({ width: 520, height: 720, parent, modal: false, title: "Sign in to MantaGlow", autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true } });
+  w.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
   await w.loadURL(`${HUB}/login?redirect=${encodeURIComponent("/dashboard")}`);
   return new Promise((resolve) => {
     const t = setInterval(async () => { if (w.isDestroyed()) { clearInterval(t); return resolve({ error: "sign-in window closed" }); } const c = await hubCookie(); if (!c) return; clearInterval(t); const r = await handToServer(tokenFromCookie(c)); if (!w.isDestroyed()) w.close(); resolve(r.status === 200 ? r.body : { error: r.body?.error ?? `hub said ${r.status}` }); }, 800);
@@ -101,10 +106,17 @@ ipcMain.handle("open-output", (_ev, { id, displayId, w, h }) => {
 });
 ipcMain.handle("close-output", (_ev, id) => { const w = outputWins.get(id); if (w) w.close(); return { ok: true }; });
 ipcMain.handle("open-outputs", () => [...outputWins.keys()]);
+// the clip clock as its own window: drag it to a producer's monitor, or read the LAN URL off the page for a laptop
+let clockWin = null;
+ipcMain.handle("open-clock", () => {
+  if (clockWin && !clockWin.isDestroyed()) { clockWin.focus(); return { ok: true }; }
+  clockWin = new BrowserWindow({ width: 560, height: 320, minWidth: 260, minHeight: 160, alwaysOnTop: true, backgroundColor: "#000000", title: "Surface — clip clock", autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+  clockWin.loadURL(`${DEV ? "http://localhost:3009" : `http://127.0.0.1:${PORT}`}/clock.html`);
+  clockWin.on("closed", () => { clockWin = null; });
+  return { ok: true };
+});
 // the screen module only exists after "ready": tell the console when a display comes or goes
 const displaysChanged = () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); };
 app.whenReady().then(() => { screen.on("display-added", displaysChanged); screen.on("display-removed", displaysChanged); return createWindow(); });
 app.on("window-all-closed", () => { serverProc?.kill(); app.quit(); });
-// closing the console closes every output with it
-app.on("browser-window-closed", () => { const main = BrowserWindow.getAllWindows().find((w) => !w.isKiosk()); if (!main) for (const w of outputWins.values()) if (!w.isDestroyed()) w.close(); });
 app.on("before-quit", () => serverProc?.kill());

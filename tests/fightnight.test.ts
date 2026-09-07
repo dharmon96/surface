@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { deriveCues, loadShowDoc, resolumePlan, disguiseCueTables, companionPage, mediaManifest } from "../core/index.js";
+import { deriveCues, loadShowDoc, resolumePlan, disguiseCueTables, companionPage, mediaManifest, publishCueNumbers } from "../core/index.js";
 
 const doc = loadShowDoc(JSON.parse(readFileSync(new URL("../fixtures/2026-06-13-glendale.bout.json", import.meta.url), "utf8")));
 const cues = deriveCues(doc);
@@ -55,5 +55,15 @@ describe("Boxing Fight Night pack on the June 13 Glendale sheet", () => {
     expect(p.page.controls["0"]["6"].style.text).toBe("WALK\\nBLUE");
     expect(p.page.controls["3"]["7"].style.text).toBe("PANIC\\nBLACK");
     expect(cues.find((c) => c.id === "B08.R01")!.companion).toEqual({ page: 9, row: 1, col: 0 });
+  });
+  it("published cue numbers are pinned: a card change never repoints existing columns", () => {
+    const d = loadShowDoc(JSON.parse(JSON.stringify(doc)));
+    const first = deriveCues(d); publishCueNumbers(d, first);
+    const winBefore = first.find((c) => c.id === "B08.WIN_RED")!.n;
+    d.data.bouts = d.data.bouts.filter((b: any) => b.order !== 1); // the opener falls off the card mid-week
+    const second = deriveCues(d);
+    expect(second.find((c) => c.id === "B08.WIN_RED")!.n).toBe(winBefore);
+    expect(second.find((c) => c.id === "B08.WIN_RED")!.resolume!.column).toBe(winBefore);
+    expect(new Set(second.map((c) => c.n)).size).toBe(second.length); // still unique columns
   });
 });

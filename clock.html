@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Surface — clip clock</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; color: #fff; width: 100vw; height: 100vh; overflow: hidden;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+      #root { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr auto auto; padding: 3vmin 4vmin; box-sizing: border-box; gap: 1vmin; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/clock.ts"></script>
+  </body>
+</html>

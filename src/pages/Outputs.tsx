@@ -31,7 +31,7 @@ export function Outputs() {
   const desktop = (window as any).surface; const [displays, setDisplays] = useState<Display[]>([]); const [open, setOpen] = useState<string[]>([]); const [identify, setIdentify] = useState(false); const [test, setTest] = useState(true);
   const [outputs, setOutputs] = useState<OutputCanvas[] | null>(null); const [auto, setAuto] = useState(false); const [dirty, setDirty] = useState(false); const [edit, setEdit] = useState<string | null>(null);
   const reload = () => fetch("/api/outputs").then((r) => r.json()).then((r) => { setOutputs(r.outputs); setAuto(r.auto); setDirty(false); });
-  useEffect(() => { reload(); if (desktop?.listDisplays) { desktop.listDisplays().then(setDisplays); desktop.openOutputs().then(setOpen); desktop.onDisplaysChanged?.(setDisplays); } }, []);
+  useEffect(() => { reload(); if (!desktop?.listDisplays) return; desktop.listDisplays().then(setDisplays); desktop.openOutputs().then(setOpen); const off = desktop.onDisplaysChanged?.(setDisplays); return typeof off === "function" ? off : undefined; }, []);
   if (!doc || !outputs) return null;
   const set = (i: number, patch: Partial<OutputCanvas>) => { setOutputs(outputs.map((o, k) => (k === i ? { ...o, ...patch } : o))); setDirty(true); };
   const save = async () => { await fetch("/api/outputs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ outputs }) }); await reload(); await load(); };

@@ -96,7 +96,7 @@ export function Screens() {
         </div>
       </div>
       <div className="panel" style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}><h3 style={{ margin: 0 }}>Screens</h3><span className="dim mono-small">{d.screens.length} rasters · {d.surfaces.length} surfaces</span><span style={{ marginLeft: "auto" }} /><button onClick={addScreen}>Add screen</button></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}><h3 style={{ margin: 0 }}>Screens</h3><span className="dim mono-small">{d.screens.length} screens · {d.surfaces.length} groups</span><span style={{ marginLeft: "auto" }} /><button onClick={addScreen}>Add screen</button></div>
         {hasMedia && <div className="dim mono-small" style={{ margin: "6px 0" }}>Media is already mapped to these ids — change labels and sizes freely, but adding or removing screens means running Prepare again.</div>}
         <table style={{ marginTop: 8 }}><thead><tr><th></th><th>Id</th><th>Label</th><th>Width</th><th>Height</th><th>Shape</th><th>Group with</th><th title="Never receives an ALL cue (host booth, LED tables, scale)">Independent</th><th title="Words the promoter uses for this screen in file names">Also called</th><th></th></tr></thead>
           <tbody>{d.screens.map((s, i) => { const sf = surfaceOf(s.id); const groupTarget = sf && sf.screens.length > 1 ? sf.id : ""; return (

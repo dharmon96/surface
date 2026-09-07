@@ -55,7 +55,7 @@ export function Hub() {
             <div className="dim mono-small" style={{ marginBottom: 8 }}>Start from the promoter's sheet — the bout sheet is the source of truth — or from nothing.</div>
             <div className="gorow" style={{ margin: 0 }}><button className="primary" disabled={busy} onClick={doImport}>{busy ? "importing…" : "Import bout / timing sheet…"}</button><input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={(e) => onFile(e.target.files?.[0])} /></div>
             {!desktop && <div className="faint mono-small" style={{ marginTop: 4 }}>Browser: text export only (`pdftotext -layout sheet.pdf sheet.txt`). The desktop app reads PDFs directly.</div>}
-            {flags && <div className="mono-small" style={{ marginTop: 8 }}><span className="tag warn">review</span> {flags.length} thing(s) to confirm on the Review tab<ul className="flags" style={{ margin: "4px 0 0", paddingLeft: 16, maxHeight: 120, overflow: "auto" }}>{flags.slice(0, 8).map((f, i) => <li key={i}>{f}</li>)}</ul></div>}
+            {flags && <div className="mono-small" style={{ marginTop: 8 }}><span className="tag warn">review</span> {flags.length} thing(s) to confirm — the "to confirm" chip in the header opens them<ul className="flags" style={{ margin: "4px 0 0", paddingLeft: 16, maxHeight: 120, overflow: "auto" }}>{flags.slice(0, 8).map((f, i) => <li key={i}>{f}</li>)}</ul></div>}
             <div style={{ borderTop: "1px solid var(--line2)", margin: "12px 0" }} />
             <div style={{ display: "grid", gap: 6 }}>
               <input placeholder="Show name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -79,7 +79,7 @@ export function Hub() {
           {projects?.enabled && !list.length && <div className="dim" style={{ padding: 10 }}>No projects yet — import a sheet or create one.</div>}
         </div>
       </div>
-      {doc && <div className="panel" style={{ marginTop: 14 }}><h3>Open now</h3><div>{doc.event.name} <span className="dim mono-small">· {doc.event.date ?? "no date"} · {doc.data.bouts?.length ?? 0} bouts · {doc.surfaces.length} surfaces · <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span></span></div><div className="dim mono-small" style={{ marginTop: 4 }}>Next: Review → approve the card · Media → map the promoter's delivery · Cues → check routing · Run.</div></div>}
+      {doc && <div className="panel" style={{ marginTop: 14 }}><h3>Open now</h3><div>{doc.event.name} <span className="dim mono-small">· {doc.event.date ?? "no date"} · {doc.data.bouts?.length ?? 0} bouts · {doc.screens.length} screens · <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span></span></div><div className="dim mono-small" style={{ marginTop: 4 }}>Next: close this drawer — the board's checklist walks the rest (confirm the card, drop the graphics, connect the engine, build).</div></div>}
     </div>
   );
 }

@@ -55,15 +55,18 @@ export class ProjectStore {
         catch (e: any) { out.errors.push(`${id}: ${e.message}`); }
       } else if (local.sync === "ahead" && r.updated_at > (local.cloudUpdatedAt ?? "")) {
         // both changed: keep ours, save theirs beside it for the operator to inspect
-        try { const full = await hub.get<{ doc: ShowDoc }>(`project:${id}`); if (full) writeFileSync(join(this.dir, id, `show.conflict-${full.updated_at.replace(/[:.]/g, "-")}.json`), JSON.stringify(full.value.doc, null, 1)); local.sync = "conflict"; out.conflicts.push(id); } catch (e: any) { out.errors.push(`${id}: ${e.message}`); }
+        try { const full = await hub.get<{ doc: ShowDoc }>(`project:${id}`); if (full) writeFileSync(join(this.dir, id, `show.conflict-${full.updated_at.replace(/[:.]/g, "-")}.json`), JSON.stringify(full.value.doc, null, 1)); local.sync = "conflict"; local.error = `both changed — ours pushed, theirs saved as show.conflict-…json (${new Date().toISOString().slice(0, 16)})`; out.conflicts.push(id); } catch (e: any) { out.errors.push(`${id}: ${e.message}`); }
       }
     }
     for (const p of this.index) {
       if (p.sync === "local" || p.sync === "ahead" || p.sync === "conflict" || p.sync === "error") {
-        try { const doc = this.readDoc(p.id); if (!doc) continue; await hub.put(`project:${p.id}`, { name: p.name, doc, meta: { createdAt: p.createdAt, pack: p.pack, eventDate: p.eventDate, venue: p.venue }, updatedAt: p.updatedAt }); p.cloudUpdatedAt = new Date().toISOString(); p.sync = "synced"; p.error = undefined; out.pushed++; }
+        try { const doc = this.readDoc(p.id); if (!doc) continue; const wasConflict = p.sync === "conflict"; const resp = await hub.put(`project:${p.id}`, { name: p.name, doc, meta: { createdAt: p.createdAt, pack: p.pack, eventDate: p.eventDate, venue: p.venue }, updatedAt: p.updatedAt }); p.cloudUpdatedAt = resp?.updated_at ?? p.updatedAt; p.sync = "synced"; if (!wasConflict) p.error = undefined; out.pushed++; } // a conflict note survives the push so the operator can still see it happened
         catch (e: any) { p.sync = "error"; p.error = e.message; out.errors.push(`${p.id}: ${e.message}`); }
       }
     }
+    // clocks differ between this PC and the hub: after pushing, adopt the hub's own timestamps so the next sync
+    // compares hub-time against hub-time and never spuriously re-pulls what we just pushed
+    if (out.pushed) { try { const after = await hub.list(); const byId = new Map(after.filter((r) => r.key.startsWith("project:")).map((r) => [r.key.slice(8), r])); for (const p of this.index) { const r = byId.get(p.id); if (r && p.sync === "synced") p.cloudUpdatedAt = r.updated_at; } } catch {} }
     this.save(); return out;
   }
 

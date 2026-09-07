@@ -40,7 +40,7 @@ describe("transcode executor", () => {
   }, 120_000);
   it("deletes originals only after a verified output, and only when asked", async () => {
     const probes = [{ ...(await probe(join(src, "walk 1a.mov"))), file: "walk 1a.mov" }];
-    const jobs = planTranscodes([{ slot: manifest[1].slot, file: "walk 1a.mov", confidence: 1, reasons: [], issues: [] }], probes, manifest, { engine: "generic", outDir: join(root, "media2"), deleteOriginals: true });
+    const jobs = planTranscodes([{ slot: manifest[1].slot, file: "walk 1a.mov", confidence: 1, reasons: [], issues: [] }], probes, manifest, { engine: "generic", outDir: join(root, "media2") });
     const r = await executeTranscodes(jobs, { srcRoot: src, deleteOriginals: true }); expect(r.failed).toEqual([]); expect(existsSync(join(src, "walk 1a.mov"))).toBe(false);
   }, 60_000);
   it("reports a failure and leaves no partial output when the source is broken", async () => {

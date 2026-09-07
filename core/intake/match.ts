@@ -79,11 +79,20 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
       if (p!.group !== bout.id) return false;
       if (graphic === "ROUND") return ev.round !== undefined && p!.variant === String(ev.round).padStart(2, "0");
       if (graphic === "TALE") return true;
-      if (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") return side ? p!.variant === side.toUpperCase() : /^(RED|BLUE)$/.test(p!.variant);
+      // a corner slot is never filled on a coin flip: no side means the operator decides
+      if (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") return side ? p!.variant === side.toUpperCase() : false;
       return false;
     });
-    if (graphic === "HOLD" && cands.length > 1) { const pick = ev.names.some((n) => /sponsor|logo/.test(n)) ? "SPONSOR" : ev.names.some((n) => /co\s?main|comain/.test(n)) ? "COMAIN" : "MAIN"; const c2 = cands.filter((c) => c.p!.variant === pick); if (c2.length) { cands.length = 0; cands.push(...c2); reasons.push(`hold variant ${pick}`); } }
-    if (!cands.length) { result.unmatched.push({ file: ev.file, evidence: ev, why: !graphic ? "graphic type not recognised" : !scr.surface && scr.candidates.length !== 1 ? `screen ambiguous (${scr.candidates.join(", ") || "none"}) at ${ev.probe?.w}x${ev.probe?.h}` : !bout && graphic !== "HOLD" && graphic !== "VT" && graphic !== "FLAG" ? "bout could not be determined" : "no slot for this combination", candidates: scr.candidates }); continue; }
+    // a VT tied to a bout (fight open) beats the event-wide VT slots when both are candidates
+    if (graphic === "VT" && bout && cands.some((c) => c.p!.group === bout.id)) { const c2 = cands.filter((c) => c.p!.group === bout.id); cands.length = 0; cands.push(...c2); reasons.push(`fight open for ${bout.id}`); }
+    if (graphic === "HOLD" && cands.length > 1) {
+      const txt = (ev.dir.join(" ") + " " + ev.base).toLowerCase().replace(/main\s?(video)?\s?(boo?ards?|screens?|led)/g, " ");
+      const pick = /sponsor|logo/.test(txt) ? "SPONSOR" : /co[\s_-]?main/.test(txt) ? "COMAIN" : /main/.test(txt) ? "MAIN" : null;
+      const c2 = pick ? cands.filter((c) => c.p!.variant === pick) : [];
+      if (c2.length) { cands.length = 0; cands.push(...c2); reasons.push(`hold variant ${pick}`); }
+      else if (new Set(cands.map((c) => c.p!.variant)).size > 1) { result.unmatched.push({ file: ev.file, evidence: ev, why: "hold variant unclear — main, co-main or sponsor? confirm", candidates: scr.candidates }); continue; }
+    }
+    if (!cands.length) { result.unmatched.push({ file: ev.file, evidence: ev, why: !graphic ? "graphic type not recognised" : !scr.surface && scr.candidates.length !== 1 ? `screen ambiguous (${scr.candidates.join(", ") || "none"}) at ${ev.probe?.w}x${ev.probe?.h}` : !bout && graphic !== "HOLD" && graphic !== "VT" && graphic !== "FLAG" ? "bout could not be determined" : bout && !side && (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") ? "corner unclear (names both fighters or a/b unresolved) — confirm which side" : "no slot for this combination", candidates: scr.candidates }); continue; }
     let conf = 0.3 + 0.3 * strength; if (scr.by === "both") conf += 0.25; else if (scr.by === "res") conf += 0.2; else if (scr.by === "word") conf += 0.1; else if (scr.by === "aspect") { conf += 0.05; reasons.push(`same shape as ${(scr.all ?? []).join(", ")} (${ev.probe?.w}x${ev.probe?.h})`); }
     if (ev.probe && cands[0].s.w === ev.probe.w && cands[0].s.h === ev.probe.h) conf += 0.1; else if (ev.probe) { conf -= 0.1; issues.push(`file is ${ev.probe.w}x${ev.probe.h}, slot wants ${cands[0].s.w}x${cands[0].s.h} — will scale`); }
     if (issues.some((i) => /sheet wins|folder/.test(i))) conf -= 0.15;

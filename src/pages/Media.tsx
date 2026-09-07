@@ -30,7 +30,7 @@ export function Media() {
         <div className="panel scroll" style={{ padding: 0 }}>
           <div style={{ padding: "8px 10px", display: "flex", gap: 8, alignItems: "center" }}><h3 style={{ margin: 0 }}>Mapping</h3><span style={{ marginLeft: "auto" }} />
             {(["all", "low", "issues"] as const).map((f) => <button key={f} className={filter === f ? "primary" : ""} onClick={() => setFilter(f)}>{f}</button>)}</div>
-          <table><thead><tr><th>Slot</th><th>File</th><th>Conf</th><th>Why / issues</th></tr></thead>
+          <table><thead><tr><th>Graphic</th><th>File</th><th>Conf</th><th>Why / issues</th></tr></thead>
             <tbody>{rows.slice(0, 400).map((a) => <tr key={a.slot}><td className="mono-small">{a.slot}</td><td className="mono-small">{a.file}{a.update && <span className="tag" style={{ marginLeft: 6 }}>update</span>}</td><td><span className="conf"><i style={{ width: `${a.confidence * 100}%`, background: a.confidence < 0.7 ? "var(--amber)" : "var(--green)" }} /></span></td><td className="mono-small dim">{a.reasons.join("; ")}{a.issues.length ? <div style={{ color: "var(--amber)" }}>{a.issues.join("; ")}</div> : null}</td></tr>)}</tbody></table>
         </div>
         <div>

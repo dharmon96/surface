@@ -18,8 +18,8 @@ function ScreenDots({ slots, screens }: { slots: BoardSlot[]; screens: string[] 
 
 function Cell({ cell, row, screens, tone, onFire, live }: { cell: BoardCell; row: string; screens: string[]; tone: string; onFire?: (n: number) => void; live?: boolean }) {
   const { mode, selected, select } = useStore(); const run = mode === "run";
-  const isSel = !run && selected?.row === row && selected.cell.key === cell.key;
-  const click = () => { if (run) { if (cell.cues[0]) onFire?.(cell.cues[0].n); } else select(isSel ? null : { row, cell }); };
+  const isSel = !run && selected?.row === row && selected.cellKey === cell.key;
+  const click = () => { if (run) { if (cell.cues[0]) onFire?.(cell.cues[0].n); } else select(isSel ? null : { row, cellKey: cell.key }); };
   const missing = cell.status === "missing" && !cell.slots.some((s) => s.thumb);
   const dur = cell.behaviour === "loop" ? "loop" : cell.behaviour === "playHold" ? "play·hold" : cell.behaviour === "timed" ? "timed" : cell.behaviour ?? "";
   return (
@@ -33,7 +33,9 @@ function Cell({ cell, row, screens, tone, onFire, live }: { cell: BoardCell; row
 /** The one place details live: whatever cell is selected, in the rail. Click the cell again (or Esc) to clear it. */
 function Selected() {
   const { selected, select, board } = useStore(); if (!selected || !board) return null;
-  const row = board.rows.find((r) => r.id === selected.row); const c = selected.cell;
+  const row = board.rows.find((r) => r.id === selected.row);
+  const c = row ? Object.values(row.cells).find((x) => x.key === selected.cellKey) : undefined;
+  if (!c) return null;
   return (
     <div className="selpanel">
       <h4>{row?.kind === "bout" ? `Bout ${row.order} · ${row.title}` : "Event"} <button className="x" onClick={() => select(null)} title="Clear (Esc)">×</button></h4>
@@ -108,7 +110,7 @@ export function Board() {
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
       <div className="startcard">
         <h2>Drop the bout sheet here</h2>
-        <p>The promoter's timing sheet or bout sheet (PDF). The card fills in — fighters, corners, rounds, titles — and every graphic it needs appears as a slot. Then drop the graphics folder on the same window.</p>
+        <p>The promoter's timing sheet or bout sheet (PDF). The card fills in — fighters, corners, rounds, titles — and every graphic the show needs appears on the board: walkouts, fight base, rounds, winners. Then drop the graphics folder on the same window.</p>
         <div className="gorow"><button className="btn primary" onClick={dropSheetBtn}>Choose a sheet…</button><button className="btn" onClick={() => useStore.getState().setDrawer("Screens")}>Load the venue's screens first</button><button className="btn" onClick={() => useStore.getState().loadSample()}>Try the sample card</button></div>
         <input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const diff = await dropSheet(await f.text(), f.name); say(diff.length ? `Sheet loaded` : "Sheet loaded"); }} />
         <p className="dim small">Already have a project? Click the show name at the top.</p>
@@ -140,8 +142,9 @@ export function Board() {
       {run && <div className="runbar">
         <div className="big">{liveRow ? `${liveRow} · ${board.rows.find((r) => r.id === liveRow)?.title ?? ""}` : "Pre-show"}<small>{liveRound ? `round ${liveRound}` : ""}{state?.current ? ` · cue ${state.current}` : ""}</small></div>
         <span>next: <b>{state?.next ?? "—"}</b></span><kbd>Space</kbd> GO · <kbd>Backspace</kbd> back · <kbd>Esc</kbd> panic
-        {board.rows[0]?.cells.TEST?.cues[0] && <button className="btn" onClick={() => go(board.rows[0].cells.TEST.cues[0].n)} title="Every screen's own test pattern — the line-up you can always go back to">Test patterns</button>}
-        <button className={`btn ${venue ? "on" : ""}`} onClick={() => setVenue(venue === "off" ? "side" : venue === "side" ? "big" : "off")} title="See what the walls are showing, on the LED map (plan or 3D)">{venue === "off" ? "Venue" : venue === "side" ? "Venue · bigger" : "Venue · hide"}</button>
+        {(() => { const evt = board.rows.find((r) => r.kind === "event"); return evt?.cells.TEST?.cues[0] && <button className="btn" onClick={() => go(evt.cells.TEST.cues[0].n)} title="Every screen's own test pattern — the line-up you can always go back to">Test patterns</button>; })()}
+        <button className={`btn ${venue !== "off" ? "on" : ""}`} onClick={() => setVenue(venue === "off" ? "side" : venue === "side" ? "big" : "off")} title="See what the walls are showing, on the LED map (plan or 3D)">{venue === "off" ? "Venue" : venue === "side" ? "Venue · bigger" : "Venue · hide"}</button>
+        <button className="btn" onClick={() => { if (desktop()?.openClock) desktop().openClock(); else window.open("/clock.html", "surface-clock", "width=560,height=320"); }} title="Remaining time of whatever video is playing (VTs, walkouts, the fight open) — its own window; share http://<this PC>:8090/clock.html on the venue network (server started with --bind 0.0.0.0)">Clip clock</button>
         <button className="gobtn" onClick={() => useStore.getState().next()}>GO</button><button className="panic" onClick={() => useStore.getState().panic()}>PANIC</button>
       </div>}
 
@@ -161,6 +164,7 @@ export function Board() {
                     <div className="full">{r.red?.name} · {r.blue?.name}</div>
                     <div className="meta">{r.meta.title && <b>{r.meta.title} · </b>}{r.meta.rounds} rds{r.meta.weightClass ? ` · ${r.meta.weightClass}` : ""}{r.red?.country && r.blue?.country ? ` · ${r.red.country} v ${r.blue.country}` : ""}</div>
                     {r.flags.slice(0, 2).map((f, i) => <span key={i} className="flag" title={f}>{f.replace(/^Bout \d+: /, "")}</span>)}</td>
+                  {board.columns.some((c) => c.key === "OPEN") && <td>{r.cells.OPEN ? <Cell cell={r.cells.OPEN} row={r.id} screens={screens} tone="t-vt" onFire={go} live={liveRow === r.id && state?.current === r.cells.OPEN.cues[0]?.n} /> : <div className="dim" style={{ textAlign: "center", padding: "18px 0" }}>—</div>}</td>}
                   <td><Cell cell={r.cells.WALK_RED} row={r.id} screens={screens} tone="t-r" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_RED.cues[0]?.n} /></td>
                   <td><Cell cell={r.cells.WALK_BLUE} row={r.id} screens={screens} tone="t-b" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_BLUE.cues[0]?.n} /></td>
                   <td><Cell cell={r.cells.TALE} row={r.id} screens={screens} tone="t-vs" onFire={go} live={liveRow === r.id && state?.current === r.cells.TALE.cues[0]?.n} /></td>
@@ -174,7 +178,7 @@ export function Board() {
         </div>
 
         {run && venue === "side" && <div className="venuecol"><Venue /></div>}
-        <aside className="rail" hidden={run && venue !== "off"}>
+        {!(run && venue !== "off") && <aside className="rail">
           {!run && <Selected />}
           {!run && <Checklist />}
           <div><h4>Screens{doc.screens.length && /placeholder/i.test(doc.review.flags.join(" ")) ? " · placeholders" : ""} <button className="x" onClick={() => useStore.getState().setDrawer("Screens")} title="Screens, groups and routing">Edit</button></h4>
@@ -196,7 +200,7 @@ export function Board() {
             <button className="btn" onClick={async () => { try { const r = await fetch("/api/bundle", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const b = await r.json(); say(`Bundle written to ${b.outDir} (${b.files.length} files)`); } catch (e: any) { say(e.message); } }}>Companion + cue sheet + disguise <span>bundle</span></button>
           </div>
           <div className="legend"><span><i style={{ background: "var(--ok)" }} />ready</span><span><i style={{ background: "var(--warn)" }} />will convert</span><span><i style={{ border: "1px solid var(--miss)" }} />missing</span><span><i style={{ background: "var(--line2)" }} />not on this screen</span><span>squares = {screens.join(" · ")}</span></div>
-        </aside>
+        </aside>}
       </div>
     </div>
   );

@@ -18,10 +18,11 @@ export function screensOf(doc: ShowDoc, surfaceId: string): Screen[] {
   });
 }
 
-/** Expand "ALL" to every non-independent surface */
+/** Expand "ALL" to every non-independent surface. Routing can outlive a screen swap (a venue import replaces the
+ *  surfaces but keeps the routing table), so names that no longer exist are dropped, never a crash at derive time. */
 export function expandScope(doc: ShowDoc, scope: string[]): string[] {
   if (scope.includes("ALL")) return doc.surfaces.filter((s) => !s.independent).map((s) => s.id);
-  return scope;
+  return scope.filter((id) => doc.surfaces.some((s) => s.id === id));
 }
 
 export function record(f: { record: { w: number; l: number; d?: number; ko: number } }): string {

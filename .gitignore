@@ -6,3 +6,5 @@ dist/
 .DS_Store
 release/
 dist-server/
+# live engine settings (venue IPs) — the example file is the one that ships
+surface.config.json

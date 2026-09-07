@@ -106,8 +106,12 @@ export interface ShowDoc {
   /** default transition per graphic type, e.g. { WINNER: "stinger:whoosh", UP_NEXT: "stinger:whoosh" } */
   transitions?: Record<string, string>;
   review: { status: "draft" | "approved"; flags: string[] };
-  /** how the engine composition is laid out — see core/engine/adapter.ts */
-  build?: { resolumeLayout?: ResolumeLayout; disguiseLayout?: ResolumeLayout };
+  /** every sheet version merged in, newest last, with the human diff */
+  versions?: { file: string; at: string; diff: string[] }[];
+  /** how the engine composition is laid out — see core/engine/adapter.ts.
+   *  cueNumbers: cue id → column, written when a composition is built ("published") — from then on those numbers are
+   *  pinned and later derivations keep them, giving new cues the next free columns instead of renumbering. */
+  build?: { resolumeLayout?: ResolumeLayout; disguiseLayout?: ResolumeLayout; cueNumbers?: Record<string, number> };
   /** physical outputs (Play mode): each = one raster the PC sends to a display port / LED processor input, with screens placed in it
    *  1:1 — PixelGrid's canvases. `fit` handles the odd output that must be a standard size (1920x1080 monitor): scale or letterbox. */
   outputs?: OutputCanvas[];

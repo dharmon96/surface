@@ -83,4 +83,24 @@ describe("stinger transitions", () => {
     expect(calls.slice(-2)).toEqual([`POST /composition/layergroups/1/columns/${cs.length + 1}/connect`, `POST /composition/layergroups/2/columns/${cs.length + 1}/connect`]);
     const plan = resolumePlan(d, cs, "C:/m", "C:/s.avc"); expect(plan.filter((o: any) => o.op === "openClip" && /STINGER_whoosh/.test(o.name)).length).toBe(4); expect((plan[0] as any).columns).toBe(cs.length + 1);
   });
+  it("together layout: the stinger connects the ROUNDS group (where the plan put the clips), once", async () => {
+    const d = JSON.parse(JSON.stringify(doc)); d.stingers = [{ id: "whoosh", name: "Whoosh", file: "TX_whoosh.mov", durationSec: 1.2, coverSec: 0.5 }]; d.build = { resolumeLayout: "together" };
+    const cs = deriveCues(d); const calls: string[] = []; const f = (async (url: string, init?: any) => { calls.push(`${init?.method ?? "GET"} ${String(url).replace("http://x/api/v1", "")}`); return { ok: true, json: async () => ({}) } as any; }) as any;
+    const ad = new ResolumeAdapter("http://x/api/v1", f); await ad.init(d, cs);
+    await ad.apply({ kind: "stinger", stinger: d.stingers[0], surfaces: ["MAIN", "RIBBON"] });
+    // in the plan, together-mode stingers live on the OVERLAY layers = group 2 (ROUNDS); one connect, not one per surface
+    expect(calls.slice(1)).toEqual([`POST /composition/layergroups/2/columns/${cs.length + 1}/connect`]);
+    const plan = resolumePlan(d, cs, "C:/m", "C:/s.avc");
+    const stClips = plan.filter((o: any) => o.op === "openClip" && /STINGER_whoosh/.test(o.name)) as any[];
+    expect(stClips.every((o) => o.layer > d.surfaces.length)).toBe(true); // all in the ROUNDS layers
+  });
+  it("panic clears OVERLAY+FULL per layer and never disconnects the composition (BASE keeps playing)", async () => {
+    const calls: string[] = []; const f = (async (url: string, init?: any) => { calls.push(`${init?.method ?? "GET"} ${String(url).replace("http://x/api/v1", "")}`); return { ok: true, json: async () => ({}) } as any; }) as any;
+    const ad = new ResolumeAdapter("http://x/api/v1", f); await ad.init(doc, deriveCues(doc));
+    await ad.apply({ kind: "panic" });
+    const panics = calls.slice(1);
+    expect(panics.every((c) => /\/composition\/layers\/\d+\/clear$/.test(c))).toBe(true);
+    expect(panics.length).toBe(doc.surfaces.length * 2); // OVERLAY + FULL for each surface, BASE untouched
+    expect(calls.some((c) => /disconnect/i.test(c))).toBe(false);
+  });
 });

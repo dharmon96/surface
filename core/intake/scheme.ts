@@ -17,12 +17,13 @@ export interface Scheme {
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 function fighterTokens(doc: ShowDoc) {
-  const out: { id: string; bout: number; side: "red" | "blue"; tokens: string[] }[] = [];
+  const out: { id: string; bout: number; side: "red" | "blue"; nameTokens: string[]; nickTokens: string[] }[] = [];
   for (const b of doc.data.bouts) for (const side of ["red", "blue"] as const) {
     const f = doc.data.fighters[b[side]]; if (!f) continue;
-    const toks = String(f.name).split(/\s+/).map(norm).filter((t) => t.length > 2 && !/^(jr|sr|ii|iii)$/.test(t));
-    if (f.nick) toks.push(...String(f.nick).split(/\s+/).map(norm).filter((t) => t.length > 3));
-    out.push({ id: b[side], bout: b.order, side, tokens: toks });
+    // ringnames stay separate — a nick token must never masquerade as the surname
+    const nameTokens = String(f.name).split(/\s+/).map(norm).filter((t) => t.length > 2 && !/^(jr|sr|ii|iii)$/.test(t));
+    const nickTokens = f.nick ? String(f.nick).split(/\s+/).map(norm).filter((t) => t.length > 3) : [];
+    out.push({ id: b[side], bout: b.order, side, nameTokens, nickTokens });
   }
   return out;
 }
@@ -32,11 +33,14 @@ export function fightersNamed(ev: FileEvidence, doc: ShowDoc): { id: string; bou
   const F = fighterTokens(doc); const names = ev.names.map(norm);
   const hits: { id: string; bout: number; side: "red" | "blue"; strength: number }[] = [];
   for (const f of F) {
-    const surname = f.tokens[f.tokens.length - 1]; const first = f.tokens[0];
-    const sHit = names.includes(surname); const fHit = f.tokens.length > 1 && names.includes(first);
-    if (!sHit && !fHit) continue;
-    const shared = F.filter((g) => g !== f && g.tokens[g.tokens.length - 1] === surname).length; // duplicate surnames on the card
-    let strength = sHit ? (shared ? 0.35 : 0.8) : 0.3; if (sHit && fHit) strength = 1;
+    const surname = f.nameTokens[f.nameTokens.length - 1]; const first = f.nameTokens[0];
+    const sHit = names.includes(surname); const fHit = f.nameTokens.length > 1 && names.includes(first);
+    const nHit = f.nickTokens.some((t) => names.includes(t));
+    if (!sHit && !fHit && !nHit) continue;
+    const shared = F.filter((g) => g !== f && g.nameTokens[g.nameTokens.length - 1] === surname).length; // duplicate surnames on the card
+    let strength = sHit ? (shared ? 0.35 : 0.8) : fHit ? 0.3 : 0;
+    if (sHit && fHit) strength = 1;
+    if (nHit) strength = Math.min(1, Math.max(strength + 0.1, 0.6)); // a ringname supports but never decides on its own
     hits.push({ id: f.id, bout: f.bout, side: f.side, strength });
   }
   return hits.sort((a, b) => b.strength - a.strength);
@@ -52,9 +56,12 @@ export function resolveScheme(files: FileEvidence[], doc: ShowDoc): Scheme {
   for (const f of numbered) {
     const named = fightersNamed(f, doc).filter((h) => h.strength >= 0.8);
     for (const h of named) {
-      if (h.bout === f.bout) opener += 1; else if (h.bout === N + 1 - f.bout!) main += 1; else continue;
-      const dir = h.bout === f.bout ? "opener-first" : "main-first";
-      evidence.push(`'${f.base}' names ${h.id} (sheet bout ${h.bout} ${h.side}) → ${dir}`);
+      const asOpener = h.bout === f.bout, asMain = h.bout === N + 1 - f.bout!;
+      if (!asOpener && !asMain) continue;
+      if (asOpener !== asMain) { // the middle bout of an odd card matches both readings — no directional information
+        if (asOpener) opener += 1; else main += 1;
+        evidence.push(`'${f.base}' names ${h.id} (sheet bout ${h.bout} ${h.side}) → ${asOpener ? "opener-first" : "main-first"}`);
+      }
       if (f.side === "a" || f.side === "b") { if ((f.side === "a") === (h.side === "red")) aRed += 1; else aBlue += 1; }
     }
   }

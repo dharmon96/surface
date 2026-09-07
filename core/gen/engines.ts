@@ -24,10 +24,12 @@ export const RESOLUME_LAYERS: Array<"BASE" | "OVERLAY" | "FULL"> = ["BASE", "OVE
  *               group 2 "ROUNDS" = one overlay layer per surface, so rounds trigger without re-firing the walls
  */
 export function resolumePlan(doc: ShowDoc, cues: Cue[], mediaRoot: string, savePath: string): ResolumeOp[] {
-  const surfaces = doc.surfaces.filter((s) => s.screens.length); // every surface gets a layer/group, independent ones included
+  // every surface gets a layer/group, independent AND screenless ones included — filtering here would shift every
+  // group/layer index out of sync with resolumeAddress (the runner would connect the wrong groups at show time)
+  const surfaces = doc.surfaces;
   const together = (doc.build?.resolumeLayout ?? "per-screen") === "together";
   const totalLayers = together ? surfaces.length * 2 : surfaces.length * RESOLUME_LAYERS.length;
-  const ops: ResolumeOp[] = [{ op: "grow", columns: cues.length, layers: totalLayers }];
+  const ops: ResolumeOp[] = [{ op: "grow", columns: cues.length + (doc.stingers?.length ?? 0), layers: totalLayers }];
   const si = (surface: string) => surfaces.findIndex((s) => s.id === surface);
   const layerIndex = (surface: string, layer: string) => together ? (layer === "OVERLAY" ? surfaces.length + si(surface) + 1 : si(surface) + 1) : si(surface) * RESOLUME_LAYERS.length + RESOLUME_LAYERS.indexOf(layer as any) + 1;
   if (together) {
@@ -69,7 +71,7 @@ export function resolumePlan(doc: ShowDoc, cues: Cue[], mediaRoot: string, saveP
   }
   // stingers live in reserved columns after the cue columns: the top layer of every surface holds the alpha animation
   (doc.stingers ?? []).forEach((st, i) => {
-    const col = cues.length + 1 + i; ops[0] = { op: "grow", columns: col, layers: totalLayers };
+    const col = cues.length + 1 + i;
     ops.push({ op: "renameColumn", index: col, name: `TX ${st.id}` });
     for (const s of surfaces) ops.push({ op: "openClip", layer: layerIndex(s.id, together ? "OVERLAY" : "FULL"), column: col, url: st.file ? `file:///${mediaRoot}/${st.file}` : "source:///video/Text Block", name: `STINGER_${st.id}_${s.id}` });
   });
@@ -114,7 +116,7 @@ export function disguiseCueTables(doc: ShowDoc, cues: Cue[], secPerCue = 10, bpm
   for (const c of cues) {
     // together: one SHOW track carries everything, rounds (overlays) get their own track so they never restart the walls
     if (together) { const k = c.targets.some((t) => t.actions.some((a) => a.layer === "OVERLAY" && a.op === "show")) && !c.targets.some((t) => t.actions.some((a) => a.layer !== "OVERLAY" && a.op === "show")) ? "ROUNDS" : "SHOW"; (byTrack.get(k) ?? byTrack.set(k, []).get(k)!).push(c); continue; }
-    for (const s of expandScope(doc, c.scope)) { const k = `${c.group === "EVT" ? "EVT" : c.group}_${s}`; (byTrack.get(k) ?? byTrack.set(k, []).get(k)!).push(c); }
+    for (const s of expandScope(doc, c.scope)) { const k = `${c.group}_${s}`; (byTrack.get(k) ?? byTrack.set(k, []).get(k)!).push(c); }
   }
   for (const [track, cs] of byTrack) {
     const lines = [`objects/track/${track}.apx`, "Beat\tTag\tNote\tTrack Time\tTimecode Time\tSection Break"];
@@ -132,7 +134,9 @@ export function disguiseCueTables(doc: ShowDoc, cues: Cue[], secPerCue = 10, bpm
 export function mediaManifest(doc: ShowDoc, cues: Cue[]): Array<{ slot: string; screen: string; w: number; h: number; layer: string; behaviour: string; usedBy: string[] }> {
   const m = new Map<string, any>();
   for (const c of cues) for (const t of c.targets) for (const a of t.actions) if (a.op === "show") {
-    const sc = screensOf(doc, t.surface).find((s) => a.media.slot.includes(`_${s.id}_`))!;
+    // slot names end `_{SCREEN}_{W}x{H}` — anchor on the full tail so IMAG never swallows IMAG_L
+    const sc = screensOf(doc, t.surface).find((s) => a.media.slot.endsWith(`_${s.id}_${s.w}x${s.h}`));
+    if (!sc) continue; // a surface with no screens (or a renamed screen) has no deliverable slot
     const e = m.get(a.media.slot) ?? { slot: a.media.slot, screen: sc.id, w: sc.w, h: sc.h, layer: a.layer, behaviour: a.media.behaviour.kind, usedBy: [] };
     e.usedBy.push(c.id); m.set(a.media.slot, e);
   }

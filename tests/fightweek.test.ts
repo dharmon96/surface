@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { deriveCues, loadShowDoc } from "../core/index.js";
+import { deriveCues, loadShowDoc, companionPage } from "../core/index.js";
 
 const base = loadShowDoc(JSON.parse(readFileSync(new URL("../fixtures/2026-06-13-glendale.bout.json", import.meta.url), "utf8")));
 const pc = JSON.parse(JSON.stringify(base)); pc.screens = [{ id: "WALL", name: "Main wall", w: 3840, h: 1080 }, { id: "TABLE_1", name: "Table 1", w: 1920, h: 384 }, { id: "TABLE_2", name: "Table 2", w: 1920, h: 384 }];
@@ -27,5 +27,19 @@ describe("fight-week packs share the bout data", () => {
   it("the three packs never collide on disguise tags", () => {
     const tags = new Set([...deriveCues(base), ...deriveCues(pc, "boxing.pressconf"), ...deriveCues(wi, "boxing.weighin")].map((c) => c.d3?.tag));
     expect([...tags].filter((t) => t?.startsWith("108.")).length).toBeGreaterThan(0); expect([...tags].some((t) => t === "8.1")).toBe(true); expect([...tags].some((t) => t === "208.1")).toBe(true);
+  });
+  it("both fight-week packs end on EVT.TEST like fight night", () => {
+    expect(deriveCues(pc, "boxing.pressconf").at(-1)!.id).toBe("EVT.TEST");
+    expect(deriveCues(wi, "boxing.weighin").at(-1)!.id).toBe("EVT.TEST");
+  });
+  it("companion pages survive fight-week cues (no walkouts, no rounds) instead of crashing the bundle", () => {
+    const cues = deriveCues(wi, "boxing.weighin");
+    const page = companionPage(wi, cues, wi.data.bouts[0].id, 2, { mode: "bridge" });
+    expect(page.version).toBe(12); expect(page.type).toBe("page");
+  });
+  it("an empty card derives holds only, without crashing", () => {
+    const empty = JSON.parse(JSON.stringify(wi)); empty.data.bouts = []; empty.data.fighters = {};
+    expect(() => deriveCues(empty, "boxing.weighin")).not.toThrow();
+    expect(() => deriveCues(empty, "boxing.pressconf")).not.toThrow();
   });
 });

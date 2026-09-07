@@ -32,9 +32,10 @@ describe("Bridge API", () => {
 describe("Card Board", () => {
   it("lays the card out as rows of graphics with per-screen readiness, all missing before a delivery", async () => {
     const b = await (await fetch(`${base}/api/board`)).json();
-    expect(b.columns.map((c: any) => c.key)).toEqual(["WALK_RED", "WALK_BLUE", "TALE", "UP_NEXT", "ROUNDS", "WINNER"]);
+    expect(b.columns.map((c: any) => c.key)).toEqual(["OPEN", "WALK_RED", "WALK_BLUE", "TALE", "UP_NEXT", "ROUNDS", "WINNER"]);
     expect(b.rows.length).toBe(9); expect(b.rows[0].kind).toBe("event"); expect(b.rows[8].meta.isMain).toBe(true);
     const b8 = b.rows[8]; expect(b8.rounds.length).toBe(12); expect(b8.cells.WALK_RED.slots.map((s: any) => s.screen)).toContain("MAIN"); expect(b8.cells.WALK_RED.status).toBe("missing");
+    expect(b8.cells.OPEN.cues[0].id).toBe("B08.VT_OPEN"); expect(b.rows[1].cells.OPEN).toBeUndefined(); // the fight open belongs to the main/co-main, not the opener
     expect(b.totals.missing).toBe(b.totals.slots); expect(b.screens.find((s: any) => s.id === "RIBBON").total).toBeGreaterThan(50);
     const req = await (await fetch(`${base}/api/board/request`)).text(); expect(req).toMatch(/Bout 8 \(.*\): .*walkout — Main LED 3840×1080/);
   });
@@ -42,5 +43,24 @@ describe("Card Board", () => {
     const text = readFileSync(new URL("../fixtures/text/2026-06-13-glendale-timing.txt", import.meta.url), "utf8");
     const r = await (await fetch(`${base}/api/sheet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, file: "timing-v2.txt" }) })).json();
     expect(r.ok).toBe(true); const v = await (await fetch(`${base}/api/versions`)).json(); expect(v.at(-1).file).toBe("timing-v2.txt");
+  });
+});
+
+describe("clip clock", () => {
+  it("counts down whatever non-looping media is on the walls", async () => {
+    const cues = await (await fetch(`${base}/api/cues`)).json();
+    const round = cues.find((c: any) => c.id === "B08.R01");
+    await fetch(`${base}/api/cue/${round.n}/go`, { method: "POST" });
+    const ck = await (await fetch(`${base}/api/clock`)).json();
+    const r1 = ck.playing.find((p: any) => p.cue.id === "B08.R01" && p.behaviour === "timed");
+    expect(r1).toBeTruthy(); expect(r1.totalSec).toBe(10);
+    expect(r1.remainingSec).toBeGreaterThan(8); expect(r1.remainingSec).toBeLessThanOrEqual(10);
+    // a playHold clip that has not been converted yet has no known duration — the clock says so instead of guessing
+    const open = cues.find((c: any) => c.id === "B08.VT_OPEN");
+    await fetch(`${base}/api/cue/${open.n}/go`, { method: "POST" });
+    const ck2 = await (await fetch(`${base}/api/clock`)).json();
+    const o = ck2.playing.find((p: any) => p.cue.id === "B08.VT_OPEN");
+    expect(o.behaviour).toBe("playHold"); expect(o.remainingSec).toBeNull();
+    expect(ck2.share.lan).toBe(false); // loopback by default — LAN sharing is the --bind opt-in
   });
 });

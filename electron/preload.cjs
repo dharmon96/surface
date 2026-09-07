@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld("surface", {
   openOutput: (o) => ipcRenderer.invoke("open-output", o),
   closeOutput: (id) => ipcRenderer.invoke("close-output", id),
   openOutputs: () => ipcRenderer.invoke("open-outputs"),
-  onDisplaysChanged: (fn) => { ipcRenderer.on("displays-changed", (_e, d) => fn(d)); },
+  openClock: () => ipcRenderer.invoke("open-clock"),
+  onDisplaysChanged: (fn) => { const h = (_e, d) => fn(d); ipcRenderer.on("displays-changed", h); return () => ipcRenderer.removeListener("displays-changed", h); },
 });

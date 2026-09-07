@@ -23,6 +23,13 @@ function targets(doc: ShowDoc, graphic: string, group: string, variant: string |
 }
 const clear = (l: "FULL" | "OVERLAY"): Action => ({ layer: l, op: "clear" });
 
+/** Line-up cue shared by every pack: every screen's own test pattern, independent surfaces included. */
+function addTestCue(doc: ShowDoc, add: (c: Omit<Cue, "n">) => void, tag: string) {
+  const all = doc.surfaces.map((s) => s.id);
+  const t: SurfaceActions[] = all.map((surface) => ({ surface, actions: [clear("FULL"), clear("OVERLAY"), ...media(doc, surface, "EVT", "TEST", null, LOOP, "TEST").map((m) => ({ layer: "BASE" as const, op: "show" as const, media: m }))] }));
+  add({ id: "EVT.TEST", group: "EVT", name: "Screen test patterns", origin: "pack", scope: all, targets: t, trigger: "Line-up / focus / any time you need to see the screens", d3: { tag, transports: all } });
+}
+
 export const boxingPressConference: Pack = {
   id: "boxing.pressconf", name: "Boxing — Press Conference",
   deriveCues(doc) {
@@ -30,7 +37,7 @@ export const boxingPressConference: Pack = {
     const tables = doc.surfaces.filter((s) => /TABLE/i.test(s.id)); const walls = doc.surfaces.filter((s) => !s.independent).map((s) => s.id);
     const cues: Cue[] = []; let n = 0; const add = (c: Omit<Cue, "n">) => cues.push({ n: ++n, ...c });
     const main = bouts.find((b: any) => b.isMain) ?? bouts.at(-1); const co = bouts.find((b: any) => b.isCoMain);
-    const holds: [string, string][] = [["MAIN", `${F[main.red].name} v ${F[main.blue].name}`]]; if (co) holds.push(["COMAIN", `${F[co.red].name} v ${F[co.blue].name}`]); holds.push(["STEP", "Step and repeat"]);
+    const holds: [string, string][] = main ? [["MAIN", `${F[main.red].name} v ${F[main.blue].name}`]] : []; if (co) holds.push(["COMAIN", `${F[co.red].name} v ${F[co.blue].name}`]); holds.push(["STEP", "Step and repeat"]);
     holds.forEach(([v, label], i) => { const t = targets(doc, "HOLD", "PC", v, "BASE", LOOP, label, walls, [clear("FULL"), clear("OVERLAY")]); add({ id: `PC.HOLD_${v}`, group: "PC", name: `Hold — ${label}`, origin: "pack", ...t, trigger: v === "STEP" ? "Face-off / photos" : "Before and between sessions", d3: { tag: `100.${i + 1}`, transports: t.scope } }); });
     for (const b of bouts) {
       const N = 100 + b.order; const red = F[b.red], blue = F[b.blue];
@@ -50,6 +57,7 @@ export const boxingPressConference: Pack = {
       const step = targets(doc, "HOLD", "PC", "STEP", "BASE", LOOP, "Step and repeat", walls, [clear("FULL")]);
       add({ id: `${b.id}.PC_STEP`, group: b.id, name: "Step and repeat (photos)", origin: "pack", ...step, trigger: "Face-off photos", d3: { tag: `${N}.9`, transports: step.scope } });
     }
+    addTestCue(doc, add, "100.99");
     return cues;
   },
 };
@@ -63,8 +71,10 @@ export const boxingWeighIn: Pack = {
     const marker = Number(doc.routing.SCALE_MARKER_SEC?.[0] ?? 4);
     const cues: Cue[] = []; let n = 0; const add = (c: Omit<Cue, "n">) => cues.push({ n: ++n, ...c });
     const main = bouts.find((b: any) => b.isMain) ?? bouts.at(-1);
-    const hold = targets(doc, "HOLD", "WI", "MAIN", "BASE", LOOP, `${F[main.red].name} v ${F[main.blue].name}`, walls, [clear("FULL")]);
-    add({ id: "WI.HOLD_MAIN", group: "WI", name: "Hold — main event", origin: "pack", ...hold, trigger: "Before / between weigh-ins", d3: { tag: "200.1", transports: hold.scope } });
+    if (main) {
+      const hold = targets(doc, "HOLD", "WI", "MAIN", "BASE", LOOP, `${F[main.red].name} v ${F[main.blue].name}`, walls, [clear("FULL")]);
+      add({ id: "WI.HOLD_MAIN", group: "WI", name: "Hold — main event", origin: "pack", ...hold, trigger: "Before / between weigh-ins", d3: { tag: "200.1", transports: hold.scope } });
+    }
     const step = targets(doc, "HOLD", "WI", "STEP", "BASE", LOOP, "Step and repeat", walls, [clear("FULL")]);
     add({ id: "WI.HOLD_STEP", group: "WI", name: "Step and repeat", origin: "pack", ...step, trigger: "Photos", d3: { tag: "200.2", transports: step.scope } });
     for (const b of bouts) {
@@ -82,6 +92,7 @@ export const boxingWeighIn: Pack = {
       add({ id: `${b.id}.WI_FACEOFF`, group: b.id, name: `Face-off — ${red.name} v ${blue.name}`, origin: "pack", ...off, trigger: "Both weighed", d3: { tag: `${N}.7`, transports: off.scope } });
       add({ id: `${b.id}.WI_STEP`, group: b.id, name: "Step and repeat (photos)", origin: "pack", ...targets(doc, "HOLD", "WI", "STEP", "BASE", LOOP, "Step and repeat", walls, [clear("FULL")]), trigger: "Photos", d3: { tag: `${N}.9`, transports: walls } });
     }
+    addTestCue(doc, add, "200.99");
     return cues;
   },
 };

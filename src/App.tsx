@@ -25,6 +25,8 @@ export default function App() {
   useEffect(() => { document.documentElement.classList.remove("dark", "light"); if (theme) document.documentElement.classList.add(theme); localStorage.setItem("surface.theme", theme); }, [theme]);
   const isDark = theme === "dark" || (!theme && window.matchMedia("(prefers-color-scheme: dark)").matches);
   useEffect(() => { load(); connect(); loadHub(true); const t = setInterval(() => useStore.getState().refreshHealth().catch(() => {}), 5000); return () => clearInterval(t); }, []);
+  // the footer promises "drop anywhere on this window": a drop outside the board must never navigate the app away
+  useEffect(() => { const stop = (e: DragEvent) => e.preventDefault(); window.addEventListener("dragover", stop); window.addEventListener("drop", stop); return () => { window.removeEventListener("dragover", stop); window.removeEventListener("drop", stop); }; }, []);
   useEffect(() => { const c = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(false); }; window.addEventListener("mousedown", c); return () => window.removeEventListener("mousedown", c); }, []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -36,7 +38,8 @@ export default function App() {
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
   }, [mode, drawer, menu]);
   const engines = (health?.adapters ?? []).filter((a) => a.id !== "mock"); const online = engines.filter((a) => a.connected);
-  const enginePill = !engines.length ? { cls: "", text: "Rehearsal · no engine" } : online.length === engines.length ? { cls: "ok", text: `${online.map((a) => a.id === "resolume" ? "Resolume" : a.id).join(" + ")} · connected` } : { cls: "bad", text: `${engines.filter((a) => !a.connected).map((a) => a.id).join(", ")} offline` };
+  const engineName = (id: string) => ({ resolume: "Resolume", disguise: "disguise", companion: "Companion", mock: "Rehearsal" } as Record<string, string>)[id] ?? id;
+  const enginePill = !engines.length ? { cls: "", text: "Rehearsal · no engine" } : online.length === engines.length ? { cls: "ok", text: `${online.map((a) => engineName(a.id)).join(" + ")} · connected` } : { cls: "bad", text: `${engines.filter((a) => !a.connected).map((a) => engineName(a.id)).join(", ")} offline` };
   const toConfirm = doc?.review.flags.filter((f) => !/placeholder|no bouts yet/i.test(f)).length ?? 0;
   const open = (k: string) => { setDrawer(k); setMenu(false); };
   return (

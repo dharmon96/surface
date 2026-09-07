@@ -6,22 +6,22 @@
  *
  * Frame = section(s). Section header: 3-byte little-endian size + 1 type byte; a zero size means a 4-byte size follows.
  * Type byte: high nibble = compressor (0xA none, 0xB snappy, 0xC complex), low nibble = texture format
- * (0xB RGB DXT1, 0xE RGBA DXT5, 0xF YCoCg DXT5, 0x1 A RGTC1). 0x0D = "multiple images" container (Hap Q Alpha).
+ * (0xB RGB DXT1, 0xE RGBA DXT5, 0xF YCoCg DXT5, 0x1 A RGTC1, 0xC RGBA BC7 = Hap R). 0x0D = "multiple images" container (Hap Q Alpha).
  * Complex payload = a Decode Instructions container (0x01) holding a per-chunk compressor table (0x02), chunk size
  * table (0x03) and optional offset table (0x04), followed by the chunk data.
  */
 import { uncompress } from "snappyjs";
 
-export type HapTexture = "DXT1" | "DXT5" | "YCoCgDXT5" | "RGTC1";
+export type HapTexture = "DXT1" | "DXT5" | "YCoCgDXT5" | "RGTC1" | "BC7";
 export interface HapFrame { textures: { format: HapTexture; data: Uint8Array }[] }
 
-const FORMAT: Record<number, HapTexture> = { 0xb: "DXT1", 0xe: "DXT5", 0xf: "YCoCgDXT5", 0x1: "RGTC1" };
+const FORMAT: Record<number, HapTexture> = { 0xb: "DXT1", 0xe: "DXT5", 0xf: "YCoCgDXT5", 0x1: "RGTC1", 0xc: "BC7" };
 /** bytes per 4×4 block */
 export const blockBytes = (f: HapTexture) => (f === "DXT1" || f === "RGTC1" ? 8 : 16);
 /** the DXT buffer size for a texture of w×h pixels */
 export const textureBytes = (f: HapTexture, w: number, h: number) => Math.ceil(w / 4) * Math.ceil(h / 4) * blockBytes(f);
-/** the WebGL enum for compressedTexImage2D (WEBGL_compressed_texture_s3tc / EXT_texture_compression_rgtc) */
-export const glFormat = (f: HapTexture) => (f === "DXT1" ? 0x83f0 : f === "RGTC1" ? 0x8dbb : 0x83f3); // COMPRESSED_RGB_S3TC_DXT1_EXT · COMPRESSED_RED_RGTC1_EXT · COMPRESSED_RGBA_S3TC_DXT5_EXT
+/** the WebGL enum for compressedTexImage2D (WEBGL_compressed_texture_s3tc / EXT_texture_compression_rgtc / EXT_texture_compression_bptc) */
+export const glFormat = (f: HapTexture) => (f === "DXT1" ? 0x83f0 : f === "RGTC1" ? 0x8dbb : f === "BC7" ? 0x8e8c : 0x83f3); // COMPRESSED_RGB_S3TC_DXT1_EXT · COMPRESSED_RED_RGTC1_EXT · COMPRESSED_RGBA_BPTC_UNORM_EXT · COMPRESSED_RGBA_S3TC_DXT5_EXT
 
 function header(b: Uint8Array, o: number): { size: number; type: number; next: number } {
   let size = b[o] | (b[o + 1] << 8) | (b[o + 2] << 16); const type = b[o + 3]; let next = o + 4;
@@ -43,6 +43,7 @@ function decodeTexture(b: Uint8Array, o: number, end: number, type: number): { f
     else if (s.type === 0x04) { offsets = []; for (let i = 0; i + 3 < body.length; i += 4) offsets.push((body[i] | (body[i + 1] << 8) | (body[i + 2] << 16) | (body[i + 3] << 24)) >>> 0); }
     p = s.next + s.size; }
   if (!comps || !sizes.length) throw new Error("HAP: complex section missing chunk tables");
+  if (comps.length < sizes.length) throw new Error(`HAP: chunk tables disagree (${comps.length} compressors, ${sizes.length} sizes)`); // silently passing raw chunks through corrupts the texture
   const dataStart = iEnd; const parts: Uint8Array[] = []; let cursor = 0;
   for (let i = 0; i < sizes.length; i++) { const start = dataStart + (offsets ? offsets[i] : cursor); const chunk = b.subarray(start, start + sizes[i]); cursor += sizes[i]; parts.push(comps[i] === 0xb ? uncompress(chunk) : chunk); }
   const total = parts.reduce((n, x) => n + x.length, 0); const out = new Uint8Array(total); let w = 0; for (const x of parts) { out.set(x, w); w += x.length; }
@@ -63,7 +64,7 @@ export function decodeHapFrame(sample: Uint8Array): HapFrame {
 /** MOV/MP4 sample entry four-cc → what the frames hold (Hap1 DXT1 · Hap5 DXT5 · HapY YCoCg · HapM YCoCg+alpha · HapA alpha only) */
 export const HAP_CODECS: Record<string, { name: string; textures: HapTexture[] }> = {
   Hap1: { name: "Hap", textures: ["DXT1"] }, Hap5: { name: "Hap Alpha", textures: ["DXT5"] }, HapY: { name: "Hap Q", textures: ["YCoCgDXT5"] },
-  HapM: { name: "Hap Q Alpha", textures: ["YCoCgDXT5", "RGTC1"] }, HapA: { name: "Hap Alpha-Only", textures: ["RGTC1"] }, Hap7: { name: "Hap R", textures: ["RGTC1"] },
+  HapM: { name: "Hap Q Alpha", textures: ["YCoCgDXT5", "RGTC1"] }, HapA: { name: "Hap Alpha-Only", textures: ["RGTC1"] }, Hap7: { name: "Hap R", textures: ["BC7"] },
 };
 
 // ── software DXT1 decode of one block (tests + thumbnails; never used at show time)

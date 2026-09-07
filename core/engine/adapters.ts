@@ -1,6 +1,6 @@
 import { createSocket, type Socket } from "node:dgram";
 import type { Cue, ShowDoc } from "../types.js";
-import { resolumeAddress, resolumeGroupsFor, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
+import { resolumeAddress, resolumeGroupsFor, resolumeLayout, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
 import { expandScope } from "../naming.js";
 import { stingerColumn, type ResolumeOp } from "../gen/engines.js";
 
@@ -34,7 +34,10 @@ export class ResolumeAdapter implements EngineAdapter {
     try {
       if (op.kind === "stinger" && op.stinger) {
         const col = stingerColumn(this.doc, this.cues, op.stinger.id); if (col === null) throw new Error(`stinger ${op.stinger.id} has no column`);
-        for (const s of op.surfaces ?? []) await this.req("POST", `/composition/layergroups/${resolumeAddress(this.doc, s, "BASE").group}/columns/${col}/connect`);
+        // the plan holds stinger clips on FULL (per-screen) / the ROUNDS overlay layers (together) — connect the group that actually has them
+        const stLayer = resolumeLayout(this.doc) === "together" ? "OVERLAY" as const : "FULL" as const;
+        const groups = [...new Set((op.surfaces ?? []).map((s) => resolumeAddress(this.doc, s, stLayer).group))];
+        for (const g of groups) await this.req("POST", `/composition/layergroups/${g}/columns/${col}/connect`);
       } else if (op.kind === "fireCue" && op.cue) {
         const r = op.cue.resolume!; const groups = resolumeGroupsFor(this.doc, op.cue);
         if (groups === "ALL") await this.req("POST", `/composition/columns/${r.column}/connect`);
@@ -49,7 +52,10 @@ export class ResolumeAdapter implements EngineAdapter {
         const { layer } = resolumeAddress(this.doc, op.surface, op.layer);
         await this.req("POST", `/composition/layers/${layer}/clips/${op.cue.n}/open`, `file:///${op.file}`);
       } else if (op.kind === "panic") {
-        await this.req("POST", "/composition/disconnectall").catch(async () => { for (const s of this.doc.surfaces) for (const l of ["OVERLAY", "FULL"] as const) await this.req("POST", `/composition/layers/${resolumeAddress(this.doc, s.id, l).layer}/clear`).catch(() => {}); });
+        // documented behaviour: clear OVERLAY + FULL, KEEP BASE — never disconnect the whole composition (that blacks the walls).
+        // together layout: FULL shares the SHOW layer with BASE, so only the ROUNDS overlays can be cleared without killing the base.
+        const layers = resolumeLayout(this.doc) === "together" ? (["OVERLAY"] as const) : (["OVERLAY", "FULL"] as const);
+        for (const s of this.doc.surfaces) for (const l of layers) await this.req("POST", `/composition/layers/${resolumeAddress(this.doc, s.id, l).layer}/clear`).catch(() => {});
       }
     } catch (e: any) { this.ok = false; this.lastError = e.message; throw e; }
   }
@@ -77,32 +83,37 @@ export class ResolumeAdapter implements EngineAdapter {
 
 // ───────────────────────────────────────────── disguise — REST transport (gototag per transport) with OSC /d3/showcontrol/cue fallback
 export class DisguiseAdapter implements EngineAdapter {
-  id = "disguise"; private doc!: ShowDoc; private ok = false; private lastError?: string; private sock?: Socket;
+  id = "disguise"; private doc!: ShowDoc; private ok = false; private lastError?: string; private sock?: Socket; private lastProbe = 0;
   constructor(private host = "10.0.0.10", private opts: { rest?: boolean; oscPort?: number; transports?: Record<string, string> } = {}, private fetchImpl: typeof fetch = fetch) {}
   async init(doc: ShowDoc) {
     this.doc = doc;
-    if (this.opts.rest !== false) { try { const r = await this.fetchImpl(`http://${this.host}/api/session/transport/transports`); this.ok = r.ok; } catch (e: any) { this.ok = false; this.lastError = e.message; } }
+    await this.probeRest();
     if (!this.ok) { this.sock = createSocket("udp4"); }
   }
+  /** REST is re-probed while down (a director that boots after Surface must not doom the whole show to unscoped OSC). */
+  private async probeRest() {
+    if (this.opts.rest === false) return; const now = Date.now(); if (this.ok || now - this.lastProbe < 5000) return; this.lastProbe = now;
+    try { const r = await this.fetchImpl(`http://${this.host}/api/session/transport/transports`); this.ok = r.ok; } catch (e: any) { this.ok = false; this.lastError = e.message; }
+  }
   private transportFor(surface: string) { return this.opts.transports?.[surface] ?? surface; }
-  private osc(address: string, args: (number | string)[]) {
-    // minimal OSC encoder: address, type tags, int32/string args
+  private osc(address: string, args: (number | string)[], floats = false) {
+    // minimal OSC encoder: address, type tags, int32/float32/string args
     const pad = (b: Buffer) => Buffer.concat([b, Buffer.alloc(4 - (b.length % 4 || 4))]);
     const str = (s: string) => pad(Buffer.from(s + "\0"));
-    const tags = "," + args.map((a) => (typeof a === "number" ? "i" : "s")).join("");
-    const body = args.map((a) => (typeof a === "number" ? (() => { const b = Buffer.alloc(4); b.writeInt32BE(a); return b; })() : str(a)));
+    const tags = "," + args.map((a) => (typeof a === "number" ? (floats ? "f" : "i") : "s")).join("");
+    const body = args.map((a) => (typeof a === "number" ? (() => { const b = Buffer.alloc(4); if (floats) b.writeFloatBE(a); else b.writeInt32BE(a); return b; })() : str(a)));
     const msg = Buffer.concat([str(address), str(tags), ...body]);
     this.sock?.send(msg, this.opts.oscPort ?? 7401, this.host);
   }
   async apply(op: EngineOp) {
     if (op.kind === "fireCue" && op.cue?.d3) {
-      const [maj, min] = op.cue.d3.tag.split(".").map(Number);
+      void this.probeRest(); // fire-and-forget: a recovered REST picks up from the next cue
       if (this.ok) {
         for (const s of expandScope(this.doc, op.cue.scope)) {
           const r = await this.fetchImpl(`http://${this.host}/api/session/transport/gototag`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ transports: [{ transport: { name: this.transportFor(s) }, type: "CUE", value: op.cue.d3.tag, playmode: "PlaySection", allowGlobalJump: true }] }) });
           if (!r.ok) { this.lastError = `gototag ${op.cue.d3.tag} → ${r.status}`; throw new Error(this.lastError); }
         }
-      } else this.osc("/d3/showcontrol/cue", [maj, min]);            // OSC transport can't scope per surface: it hits the OSC transport's track
+      } else this.osc("/d3/showcontrol/cue", [parseFloat(op.cue.d3.tag)], true); // one float cue number ("8.11" → 8.11); OSC can't scope per surface — needs a live d3 check
     } else if (op.kind === "setText" && op.surface && op.key) {
       if (this.ok) await this.fetchImpl(`http://${this.host}/api/session/sockpuppet/live`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patches: [{ address: `${op.surface}/${op.key}`, changes: [{ field: "text", stringValue: op.value ?? "" }] }] }) });
       else this.osc(`/d3/layer/${op.surface}_${op.key}/text`, [op.value ?? ""]);
@@ -117,7 +128,9 @@ export class DisguiseAdapter implements EngineAdapter {
 export class CompanionAdapter implements EngineAdapter {
   id = "companion"; private ok = false; private lastError?: string;
   constructor(private base = "http://127.0.0.1:8000", private getVars: () => Record<string, string>, private fetchImpl: typeof fetch = fetch) {}
-  async init() { try { const r = await this.fetchImpl(`${this.base}/api/connections`); this.ok = r.ok; } catch (e: any) { this.ok = false; this.lastError = e.message; } }
+  // reachability only: Companion's public HTTP API has no cheap documented health route, but its web UI answers on the same port;
+  // real health comes from the first custom-variable push (apply sets ok per request)
+  async init() { try { const r = await this.fetchImpl(`${this.base}/`); this.ok = r.ok; } catch (e: any) { this.ok = false; this.lastError = e.message; } }
   async apply(op: EngineOp) {
     if (op.kind !== "fireCue" && op.kind !== "revertBase" && op.kind !== "panic") return;
     const vars = this.getVars();

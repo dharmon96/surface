@@ -39,10 +39,22 @@ export function parseTimingSheet(text: string, sourceFile = "timing-sheet.pdf"):
   const doors = (lines.find((l) => /OPEN DOORS/i.test(l)) ?? "").match(/(\d{1,2}:\d{2}\s*[AP]M)/i)?.[1];
   const tz = (lines.find((l) => /OPEN DOORS/i.test(l)) ?? "").match(/[AP]M\s+([A-Z]{2,4})\b/)?.[1];
   const colHead = lines.find((l) => /CORNER/.test(l) && /RDS|BOUT/.test(l)) ?? "";
-  const blueFirst = colHead.indexOf("BLUE") >= 0 && colHead.indexOf("BLUE") < colHead.indexOf("RED");
-  if (!colHead) flags.push("No corner column header found — assumed BLUE left, RED right");
-  const redIntroFirst = /RED CORNER\s*\([^)]*1st/i.test(colHead) || !/BLUE CORNER\s*\([^)]*1st/i.test(colHead);
-  const order = redIntroFirst ? ["red", "blue"] : ["blue", "red"];
+  const hasBlueCol = /BLUE\s+CORNER/i.test(colHead), hasRedCol = /RED\s+CORNER/i.test(colHead);
+  const blueFirst = hasBlueCol && hasRedCol ? colHead.toUpperCase().indexOf("BLUE") < colHead.toUpperCase().indexOf("RED") : true;
+  if (!hasBlueCol || !hasRedCol) flags.push(colHead
+    ? `Corner column header names only the ${hasRedCol ? "RED" : "BLUE"} corner — assumed BLUE left, RED right; confirm corners`
+    : "No corner column header found — assumed BLUE left, RED right; confirm corners");
+  // walk/intro order from the header parens, each on its own: "(Walk, Intro 1st)" annotates both, "(Walk 2nd, Intro 1st)" splits them
+  const paren = (c: string) => colHead.match(new RegExp(`${c}\\s+CORNER\\s*\\(([^)]*)\\)`, "i"))?.[1] ?? "";
+  const ordinal = (p: string, kind: string) => p.match(new RegExp(`${kind}s?[^,)]*?(1st|2nd)`, "i"))?.[1] ?? p.match(/(1st|2nd)\s*$/)?.[1] ?? null;
+  const orderFor = (kind: string): ("red" | "blue")[] | null => {
+    const r = ordinal(paren("RED"), kind), b = ordinal(paren("BLUE"), kind);
+    if (r === "1st" || b === "2nd") return ["red", "blue"];
+    if (b === "1st" || r === "2nd") return ["blue", "red"];
+    return null;
+  };
+  const walkOrder = orderFor("walk") ?? ["red", "blue"], introOrder = orderFor("intro") ?? ["red", "blue"];
+  if (!orderFor("walk") || !orderFor("intro")) flags.push("Walk/intro order not annotated in the corner header — assumed red first; confirm");
   // ── bout blocks
   const startIdx = lines.indexOf(colHead) + 1;
   const blocks: { bout: number; rounds: number; lines: string[]; feedBefore?: string }[] = [];
@@ -94,7 +106,7 @@ export function parseTimingSheet(text: string, sourceFile = "timing-sheet.pdf"):
     if (b.feedBefore) { feedStart = to24h(b.feedBefore); firstBroadcast = `B${String(b.bout).padStart(2, "0")}`; }
     bouts.push({ id: `B${String(b.bout).padStart(2, "0")}`, order: b.bout, red: redId, blue: blueId, rounds: b.rounds, title: titleText, weightClass, female, isMain: false, broadcast: !!feedStart, timing, anthems: [] });
   }
-  if (bouts.length) { bouts[bouts.length - 1].isMain = true; if (bouts.length > 1) bouts[bouts.length - 2].isCoMain = true; }
+  if (bouts.length) { bouts[bouts.length - 1].isMain = true; if (bouts.length > 1) bouts[bouts.length - 2].isCoMain = true; flags.push(`Main = bout ${bouts[bouts.length - 1].order}${bouts.length > 1 ? `, co-main = bout ${bouts[bouts.length - 2].order}` : ""} (last on the sheet) — confirm`); }
   // anthem suggestions: title bouts with a non-US fighter
   for (const b of bouts) if (b.title) { const cs = [...new Set([fighters[b.red].country, fighters[b.blue].country])].filter((c) => c !== "??"); if (cs.length > 1 || (cs.length === 1 && cs[0] !== "US")) { b.anthems = cs; flags.push(`Bout ${b.order}: anthems suggested ${cs.join("/")} from fighter countries — confirm with promoter`); } }
   flags.push("Screens are placeholders until the venue screen list (PixelMapper) is supplied");
@@ -102,7 +114,7 @@ export function parseTimingSheet(text: string, sourceFile = "timing-sheet.pdf"):
   const main = bouts[bouts.length - 1];
   return {
     schema: "surface/2.0", source: { file: sourceFile, kind: "timing_sheet", parsedAt: new Date().toISOString().slice(0, 10) },
-    event: { id: `${date || "undated"}-${slug(venue || city || "event")}`, name: main ? `${fighters[main.red].name} v ${fighters[main.blue].name}` : venue, date, timezone: tz, venue, city, doors: doors ? to24h(doors) : undefined, broadcast: feedStart ? { network: "TBD", feedStart, firstBroadcastBout: firstBroadcast } : undefined, walkOrder: order, introOrder: order },
+    event: { id: `${date || "undated"}-${slug(venue || city || "event")}`, name: main ? `${fighters[main.red].name} v ${fighters[main.blue].name}` : venue, date, timezone: tz, venue, city, doors: doors ? to24h(doors) : undefined, broadcast: feedStart ? { network: "TBD", feedStart, firstBroadcastBout: firstBroadcast } : undefined, walkOrder, introOrder },
     screens: PLACEHOLDER_SCREENS, surfaces, data: { fighters, bouts, vts: [] }, routing: DEFAULT_ROUTING, customCues: [], review: { status: "draft", flags },
   };
 }

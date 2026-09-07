@@ -13,7 +13,8 @@ export interface SampleRef { offset: number; size: number; dts: number; cts: num
 function topLevelBoxes(fd: number, fileSize: number): { type: string; offset: number; size: number; headerSize: number }[] {
   const out = []; let o = 0; const hdr = Buffer.alloc(16);
   while (o + 8 <= fileSize) {
-    readSync(fd, hdr, 0, 16, o); let size = hdr.readUInt32BE(0); const type = hdr.toString("latin1", 4, 8); let hs = 8;
+    hdr.fill(0); // a truncated read near EOF must not leave the previous box's bytes where the 64-bit size would be
+    readSync(fd, hdr, 0, Math.min(16, fileSize - o), o); let size = hdr.readUInt32BE(0); const type = hdr.toString("latin1", 4, 8); let hs = 8;
     if (size === 1) { size = Number(hdr.readBigUInt64BE(8)); hs = 16; } else if (size === 0) size = fileSize - o;
     out.push({ type, offset: o, size, headerSize: hs }); if (size < 8) break; o += size;
   }

@@ -7,7 +7,8 @@
  *  - stills stay PNG, resized only when the slot resolution differs.
  *  - rasters wider than MAX_TEX (16384) are tiled into N equal slices (fascia at 28576x64 -> 2 x 14288x64).
  *  - stray audio is stripped unless the slot's behaviour says the audio is the point (walkout music).
- *  - originals are deleted only after the output verifies (frame count within 1, decodes) — `deleteOriginal` is a plan flag.
+ *  - originals are deleted only when the executor is told to AND after the output verifies — `deleteOriginal` on a job is a
+ *    per-job veto (false blocks deletion even when the executor was told to delete).
  */
 import type { Assignment } from "./match.js";
 import type { Probe } from "./intake.js";
@@ -26,7 +27,7 @@ export interface TranscodeJob {
 
 const gcdAspectClose = (a: number, b: number) => Math.abs(a - b) < 0.02;
 
-export function planTranscodes(assignments: Assignment[], probes: Probe[], manifest: ReturnType<typeof mediaManifest>, opts: { engine: Engine; outDir: string; deleteOriginals?: boolean; keepAudioFor?: string[] }): TranscodeJob[] {
+export function planTranscodes(assignments: Assignment[], probes: Probe[], manifest: ReturnType<typeof mediaManifest>, opts: { engine: Engine; outDir: string; keepAudioFor?: string[] }): TranscodeJob[] {
   const P = new Map(probes.map((p) => [p.file, p])); const M = new Map(manifest.map((m) => [m.slot, m]));
   const keepAudioFor = opts.keepAudioFor ?? ["WALKOUT", "VT"];
   const jobs: TranscodeJob[] = [];
@@ -37,12 +38,14 @@ export function planTranscodes(assignments: Assignment[], probes: Probe[], manif
     const fit: TranscodeJob["fit"] = p.w === m.w && p.h === m.h ? "exact" : gcdAspectClose(p.w / p.h, m.w / m.h) ? "scale" : "letterbox";
     if (fit !== "exact") notes.push(`${p.w}x${p.h} → ${m.w}x${m.h} (${fit})`);
     const tiles = m.w > MAX_TEX ? Math.ceil(m.w / MAX_TEX) : 1;
-    // GPU codecs (HAP/DXV) need dimensions in multiples of 4: tiles are cut at a 4-aligned width and the raster is padded (right edge, off-screen) to fit
-    const tileW = tiles > 1 ? Math.ceil(m.w / tiles / 4) * 4 : m.w; const padW = tileW * tiles; const padH = Math.ceil(m.h / 4) * 4;
+    // GPU codecs (HAP/DXV) need dimensions in multiples of 4: tiles are cut at a 4-aligned width and the raster is padded (right edge, off-screen) to fit.
+    // Stills stay PNG (no alignment requirement) but tiled stills still need the raster padded to the tile grid so every crop stays inside the frame.
+    const align = p.still ? 1 : 4;
+    const tileW = tiles > 1 ? Math.ceil(m.w / tiles / align) * align : m.w; const padW = tileW * tiles; const padH = Math.ceil(m.h / align) * align;
     if (tiles > 1) notes.push(`${m.w}px wide exceeds ${MAX_TEX} — ${tiles} tiles of ${tileW}px${padW !== m.w ? ` (raster padded to ${padW}px)` : ""}`);
     if (padH !== m.h || (tiles === 1 && padW !== m.w)) notes.push(`padded to ${padW}x${padH} for 4-pixel codec alignment`);
     const vf = fit === "exact" ? [] : fit === "scale" ? [`scale=${m.w}:${m.h}:flags=lanczos`] : [`scale=${m.w}:${m.h}:force_original_aspect_ratio=decrease:flags=lanczos`, `pad=${m.w}:${m.h}:(ow-iw)/2:(oh-ih)/2:black`];
-    if (!p.still && (padW !== m.w || padH !== m.h)) vf.push(`pad=${padW}:${padH}:0:0:black`);
+    if (padW !== m.w || padH !== m.h) vf.push(`pad=${padW}:${padH}:0:0:black`);
     const alpha = /a$|rgba|argb|bgra|yuva|gbrap/.test(p.pix ?? "") && !p.still;
     let codec: TranscodeJob["codec"]; let action: TranscodeJob["action"];
     if (p.still) { codec = "png"; action = fit === "exact" && tiles === 1 ? "copy" : tiles > 1 ? "resize+tile" : "resize"; }
@@ -56,7 +59,7 @@ export function planTranscodes(assignments: Assignment[], probes: Probe[], manif
       const enc = codec === "png" ? ["-frames:v", "1"] : codec === "dxv" ? ["-c:v", "dxv"] : codec === "hap" ? ["-c:v", "hap", "-format", "hap_q"] : codec === "hap_alpha" ? ["-c:v", "hap", "-format", "hap_alpha"] : ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16"];
       args.push(["-y", "-i", a.file, ...v, ...enc, ...(keepAudio ? ["-c:a", "aac", "-b:a", "192k"] : ["-an"]), "-movflags", "+faststart", out]);
     }
-    jobs.push({ slot: a.slot, src: a.file, out: outs, action, codec, args, keepAudio, fit, notes, deleteOriginal: !!opts.deleteOriginals });
+    jobs.push({ slot: a.slot, src: a.file, out: outs, action, codec, args, keepAudio, fit, notes, deleteOriginal: true });
   }
   return jobs;
 }

@@ -10,10 +10,12 @@ import { intake } from "../core/intake/match.js";
 import { numbered } from "./fixtures-deliveries.js";
 
 const root = join(tmpdir(), `surface-ocr-${process.pid}`);
+// Windows ffmpeg builds often ship without a usable fontconfig, so drawtext needs an explicit fontfile
+const font = process.platform === "win32" ? "fontfile='C\\:/Windows/Fonts/arialbd.ttf':" : "";
 beforeAll(() => { rmSync(root, { recursive: true, force: true }); mkdirSync(root, { recursive: true });
   // a "badly named" round card: 2 s video, big white ROUND 7 text revealed after 0.4 s; and a fighter card with a surname
-  execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=0x101830:size=1920x1080:rate=30", "-t", "2", "-vf", "drawtext=text='ROUND 7':fontsize=220:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='gte(t,0.4)'", "-c:v", "libx264", "-pix_fmt", "yuv420p", join(root, "final_v3 (2).mov")], { stdio: "ignore" });
-  execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=black:size=1920x1080", "-frames:v", "1", "-vf", "drawtext=text='ANTONIO VARGAS':fontsize=160:fontcolor=white:x=(w-tw)/2:y=(h-th)/2", join(root, "IMG_0042.png")], { stdio: "ignore" });
+  execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=0x101830:size=1920x1080:rate=30", "-t", "2", "-vf", `drawtext=${font}text='ROUND 7':fontsize=220:fontcolor=white:x=(w-tw)/2:y=(h-th)/2:enable='gte(t,0.4)'`, "-c:v", "libx264", "-pix_fmt", "yuv420p", join(root, "final_v3 (2).mov")], { stdio: "ignore" });
+  execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=black:size=1920x1080", "-frames:v", "1", "-vf", `drawtext=${font}text='ANTONIO VARGAS':fontsize=160:fontcolor=white:x=(w-tw)/2:y=(h-th)/2`, join(root, "IMG_0042.png")], { stdio: "ignore" });
 });
 
 describe("frame-sampling OCR", () => {

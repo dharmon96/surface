@@ -19,13 +19,12 @@
  * POST /api/projects/import, POST /api/projects/:id/open, DELETE /api/projects/:id, POST /api/projects/sync).
  */
 import express from "express";
-import cors from "cors";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { readFileSync, existsSync } from "node:fs";
-import { deriveCues, loadShowDoc, mediaManifest } from "../core/index.js";
+import { deriveCues, loadShowDoc, mediaManifest, publishCueNumbers } from "../core/index.js";
 import { writeFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve as resolvePath, sep } from "node:path";
 import { probe } from "../core/intake/intake.js";
 import { intake } from "../core/intake/match.js";
 import { planTranscodes } from "../core/intake/transcode.js";
@@ -51,10 +50,13 @@ import { resolumePlan } from "../core/gen/engines.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, statSync as statSyncFs } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, networkInterfaces } from "node:os";
 
 export interface SurfaceConfig {
   port?: number;
+  /** interface to listen on. Default 127.0.0.1 (the console PC only). Bridge mode with Companion on ANOTHER machine
+   *  needs "0.0.0.0" (--bind) — the API is unauthenticated, so open it up only on a trusted show network. */
+  bind?: string;
   /** where to persist engine settings changed from the UI (the file the server was started with) */
   configFile?: string;
   /** where projects and the hub session live (Electron: the user-data dir). Without it the server is a single-show server. */
@@ -99,12 +101,23 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   runner = new Runner(doc, cues, adapters);
   for (const a of adapters) await a.init(doc, cues);
 
-  const app = express(); app.use(cors()); app.use(express.json({ limit: "20mb" })); app.use(express.text({ limit: "20mb" }));
+  // no CORS wildcard: the UI is same-origin (Electron serves dist/, Vite dev proxies /api and /socket.io),
+  // and Bridge-mode Companion calls are server-to-server — a drive-by web page must not be able to fire cues
+  const app = express(); app.use(express.json({ limit: "20mb" })); app.use(express.text({ limit: "20mb" }));
   if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) { app.use(express.static(process.env.SURFACE_STATIC)); }
-  const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
+  const http = createServer(app); const io = new Server(http);
   runner.on((e) => io.emit(e.type, e));
+  /** wrap an async route so a thrown error becomes a 500, never an unhandled rejection that hangs the request */
+  const guard = (fn: (q: any, res: any) => Promise<unknown> | unknown) => (q: any, res: any) => Promise.resolve(fn(q, res)).catch((e: any) => { if (!res.headersSent) res.status(500).json({ error: String(e?.message ?? e) }); });
 
   const proxies = new ProxyStore(join(cfg.dataDir ?? tmpdir(), "surface-proxies"));
+  /** file-serving endpoints (?f=<abs>) only ever serve from the show's own directories — never the whole disk */
+  const allowedFile = (f: string) => {
+    if (!f) return false;
+    const roots = [doc.mediaRoot, lastIntake?.dir, lastIntake?.mediaDir, mediaRootOf()].filter(Boolean) as string[];
+    const rf = resolvePath(f).toLowerCase();
+    return roots.some((r) => { const rr = resolvePath(r).toLowerCase(); return rf === rr || rf.startsWith(rr + sep); });
+  };
   /** the show's audio standard (default: level-match to −18 LUFS, peaks under −1 dBTP) */
   const levelMatchOpts = () => (doc.audio?.levelMatch ?? true) ? { targetLufs: doc.audio?.targetLufs ?? -18, ceilingDbTp: doc.audio?.ceilingDbTp ?? -1 } : false as const;
   /** Where this project's converted media lives: set by the first Prepare, else beside the project file. */
@@ -171,14 +184,14 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   });
   app.post("/api/projects/:id/open", (q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); const d = store.readDoc(q.params.id); if (!d) return res.status(404).json({ error: "no such project" }); activeId = q.params.id; showFile = store.path(activeId); doc = loadShowDoc(d); cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(join(cfg.dataDir!, "active.json"), JSON.stringify({ id: activeId })); io.emit("show", { type: "show", event: doc.event, project: activeId }); res.json({ ok: true, ...projectsView() }); });
   app.delete("/api/projects/:id", async (q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (q.params.id === activeId) return res.status(409).json({ error: "close it first (open another project)" }); store.remove(q.params.id); if (q.query.cloud && hub.signedIn) { try { await hub.delete(`project:${q.params.id}`); } catch (e: any) { return res.json({ ok: true, warning: `removed locally; hub: ${e.message}`, ...projectsView() }); } } res.json({ ok: true, ...projectsView() }); });
-  app.post("/api/projects/sync", async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); });
+  app.post("/api/projects/sync", guard(async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); }));
   app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
   const mediaDirFor = (dir: string, outDir?: string) => outDir ?? join(dir, "..", "media");
   /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
   async function runIntake(dir: string, o: { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string }) {
     const walk = (d: string): string[] => { try { return readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(mov|mp4|mxf|avi|png|jpe?g|tif|webp)$/i.test(f) ? [p] : []; }); } catch { return []; } };
-    const files = walk(dir); const probes = [];
-    for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch {} }
+    const files = walk(dir); const probes = []; const unreadable: { file: string; why: string }[] = [];
+    for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch { unreadable.push({ file: relative(dir, f).replace(/\\/g, "/"), why: "unreadable — ffprobe could not open it" }); } }
     const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
     const man = mediaManifest(doc, cues);
     let r = intake(doc, man, probes, syn, { override: o.override });
@@ -189,12 +202,22 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
       await Promise.all(Array.from({ length: 3 }, async () => { for (let p = list[i++]; p; p = list[i++]) { try { ocr[p.file] = await ocrFile(join(dir, p.file), p); ocrRan++; io.emit("intake", { phase: "ocr", file: p.file, done: ocrRan, total: list.length }); } catch {} } }));
       r = intake(doc, man, probes, syn, { override: o.override, ocr });
     }
-    const jobs = planTranscodes(r.assignments, probes, man, { engine: o.engine ?? "resolume", outDir: mediaDirFor(dir, o.outDir), deleteOriginals: false });
-    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
+    const jobs = planTranscodes(r.assignments, probes, man, { engine: o.engine ?? "resolume", outDir: mediaDirFor(dir, o.outDir) });
+    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: [...r.ignored, ...unreadable], unfilled: r.unfilled, issues: r.issues, jobs };
+    // every delivery-level inference lands in review.flags — the "N to confirm" chip must see what intake decided
+    const marker = "Delivery: ";
+    const infFlags: string[] = [];
+    if (!o.override?.direction && r.scheme.direction !== "unknown") infFlags.push(`${marker}numbering read from filenames — 1 = ${r.scheme.direction === "opener-first" ? "the opener" : "the main event"} (confidence ${Math.round(r.scheme.confidence * 100)}%); confirm`);
+    if (!o.override?.aIs && r.scheme.aIs !== "unknown") infFlags.push(`${marker}sides read from filenames — a = ${r.scheme.aIs}; confirm`);
+    const byAspect = r.assignments.filter((a) => a.reasons.some((x) => x.startsWith("same shape as"))).length;
+    if (byAspect) infFlags.push(`${marker}${byAspect} graphic(s) matched a screen by shape only, not exact pixels — check their thumbnails on the board`);
+    if (unreadable.length) infFlags.push(`${marker}${unreadable.length} file(s) could not be read at all — see the Media list`);
+    const kept = doc.review.flags.filter((f) => !f.startsWith(marker));
+    if (infFlags.length || kept.length !== doc.review.flags.length) { doc.review.flags = [...kept, ...infFlags]; persist(); }
     io.emit("board", { type: "board", reason: "intake" });
     return lastIntake;
   }
-  app.post("/api/intake", async (q, res) => { const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); res.json(await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr, engine: q.body?.engine, outDir: q.body?.outDir })); });
+  app.post("/api/intake", guard(async (q, res) => { const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); res.json(await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr, engine: q.body?.engine, outDir: q.body?.outDir })); }));
   app.get("/api/intake", (_q, res) => res.json(lastIntake));
   app.get("/api/versions", (_q, res) => res.json((doc as any).versions ?? []));
   // ── transcode execution: runs the last plan; progress over Socket.IO ("transcode" events); originals deleted only if asked and only after verify
@@ -221,17 +244,17 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   // ── the Card Board itself, the promoter request, thumbnails
   const thumbDir = join(cfg.dataDir ?? tmpdir(), "surface-thumbs"); mkdirSync(thumbDir, { recursive: true });
   /** preview proxy for any file (HAP / DXV / NotchLC / ProRes → small H.264, alpha → VP9 webm); 202 while it is being built */
-  app.get("/api/proxy", async (q, res) => {
-    const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end();
+  app.get("/api/proxy", guard(async (q, res) => {
+    const f = String(q.query.f ?? ""); if (!allowedFile(f) || !existsSync(f)) return res.status(404).end();
     const p = proxies.pathFor(f); if (p.ready) return res.set("Cache-Control", "private, max-age=3600").sendFile(p.path, { acceptRanges: true });
     void proxies.build(f); res.status(202).json({ building: true });
-  });
+  }));
   const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
   const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl });
   app.get("/api/board", (_q, res) => res.json(board()));
   app.get("/api/board/request", (_q, res) => res.type("text/plain").send(promoterRequest(board(), doc)));
-  app.get("/api/thumb", async (q, res) => {
-    const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end();
+  app.get("/api/thumb", guard(async (q, res) => {
+    const f = String(q.query.f ?? ""); if (!allowedFile(f) || !existsSync(f)) return res.status(404).end();
     const st = statSyncFs(f); const key = createHash("sha1").update(`${f}|${st.size}|${st.mtimeMs}`).digest("hex"); const out = join(thumbDir, `${key}.jpg`);
     if (!existsSync(out)) {
       // one frame ~1 s in (animated cards have revealed their text by then), 264 px wide, flattened over black
@@ -242,9 +265,9 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     }
     if (!existsSync(out)) return res.status(404).end();
     res.set("Cache-Control", "private, max-age=86400").sendFile(out);
-  });
+  }));
   // ── the venue view: screens in metres (PixelGrid 3D/2D positions, else an automatic layout) + what each surface is showing, as media URLs
-  app.get("/api/media", (q, res) => { const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end(); res.set("Cache-Control", "private, max-age=3600").sendFile(f, { acceptRanges: true }); });
+  app.get("/api/media", (q, res) => { const f = String(q.query.f ?? ""); if (!allowedFile(f) || !existsSync(f)) return res.status(404).end(); res.set("Cache-Control", "private, max-age=3600").sendFile(f, { acceptRanges: true }); });
   /** every screen with what it is showing right now (BASE/OVERLAY/FULL as preview URLs) — the venue mirror and the outputs share it */
   const liveScreens = () => {
     const screens = autoVenue(doc.screens, doc.surfaces); const root = mediaRootOf();
@@ -258,6 +281,28 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     return { screens: out, current: st.current, bout: st.bout, round: st.round };
   };
   app.get("/api/venue", (_q, res) => res.json(liveScreens()));
+  // ── the clip clock: remaining time of whatever non-looping media is on the walls (VTs, walkouts, fight opens, stings,
+  // timed cards). Served as /clock.html so a laptop on the venue network can watch it too (needs --bind 0.0.0.0).
+  const clipDur = new Map<string, number>();
+  const clock = () => {
+    try { const mp = join(mediaRootOf(), "_manifest.json"); if (existsSync(mp)) for (const m of JSON.parse(readFileSync(mp, "utf8"))) if (m.durationSec && m.slot) clipDur.set(m.slot, m.durationSec); } catch {}
+    const st = runner.getState(); const now = Date.now(); const seen = new Set<string>(); const playing: any[] = [];
+    for (const [sid, S] of Object.entries(st.surfaces)) for (const l of ["FULL", "OVERLAY", "BASE"] as const) {
+      const L = S[l]; if (!L.slot || L.cueN == null || seen.has(L.slot)) continue;
+      const cue = cues.find((c) => c.n === L.cueN); if (!cue) continue;
+      const act: any = cue.targets.flatMap((t) => t.actions).find((a: any) => a.op === "show" && a.media.slot === L.slot);
+      const b = act?.media?.behaviour; if (!b || b.kind === "loop") continue;
+      const total = b.kind === "timed" ? b.holdSec : b.kind === "playToMarker" ? b.markerSec : clipDur.get(L.slot) ?? null;
+      const elapsed = (now - L.since) / 1000; seen.add(L.slot);
+      playing.push({ slot: L.slot, cue: { n: cue.n, id: cue.id, name: cue.name }, behaviour: b.kind, surface: sid, layer: l, totalSec: total, elapsedSec: Math.round(elapsed * 10) / 10, remainingSec: total != null ? Math.max(0, Math.round((total - elapsed) * 10) / 10) : null });
+    }
+    playing.sort((a, b2) => (a.remainingSec ?? Infinity) - (b2.remainingSec ?? Infinity));
+    const nx = st.next != null ? cues.find((c) => c.n === st.next) : undefined;
+    const lan = (cfg.bind ?? "127.0.0.1") === "0.0.0.0";
+    const ips = lan ? Object.values(networkInterfaces()).flat().filter((x: any) => x && x.family === "IPv4" && !x.internal).map((x: any) => x.address) : [];
+    return { playing, current: st.current, next: nx ? { n: nx.n, id: nx.id, name: nx.name } : null, serverNow: now, share: { lan, port: cfg.port ?? 8090, urls: ips.map((ip) => `http://${ip}:${cfg.port ?? 8090}/clock.html`) } };
+  };
+  app.get("/api/clock", (_q, res) => res.json(clock()));
   // ── outputs: the canvases the LED processors take (PixelGrid canvases or one per screen), each assignable to a display
   app.get("/api/outputs", (_q, res) => res.json({ outputs: doc.outputs ?? autoOutputs(doc.screens), auto: !doc.outputs?.length }));
   app.put("/api/outputs", (q, res) => { const outputs: OutputCanvas[] = q.body?.outputs; if (!Array.isArray(outputs)) return res.status(400).json({ error: "outputs[] required" }); setShow({ ...doc, outputs }); res.json({ ok: true }); });
@@ -339,10 +384,14 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     } catch (e: any) { res.status(502).json({ error: e.message }); }
   });
   // ── build the engine live (Resolume over REST); the author-only bundle stays at /api/bundle
+  /** the 1-frame transparent still every "clear" clip points at — created in the media root before any build references it */
+  const CLEAR_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAGklEQVR4nGNkoBCwjBrAMBoGDKNhwDAswgAAggAAPmp6ZNoAAAAASUVORK5CYII=", "base64");
+  const ensureClearStill = (root: string) => { const p = join(root, "_CLEAR.png"); if (!existsSync(p)) { mkdirSync(root, { recursive: true }); writeFileSync(p, CLEAR_PNG); } };
   app.post("/api/build/resolume", async (q, res) => {
     const ra = adapters.find((a) => a.id === "resolume") as ResolumeAdapter | undefined; if (!ra) return res.status(400).json({ error: "no Resolume adapter in surface.config.json" });
-    const mediaRoot = q.body?.mediaRoot ?? mediaRootOf(); const plan = resolumePlan(doc, cues, mediaRoot, q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`));
-    try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); (doc as any).built = { ...((doc as any).built ?? {}), resolume: new Date().toISOString() }; persist(); res.json({ ok: true, ops: n }); }
+    const mediaRoot = q.body?.mediaRoot ?? mediaRootOf(); ensureClearStill(mediaRoot);
+    const plan = resolumePlan(doc, cues, mediaRoot.replace(/\\/g, "/"), String(q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`)).replace(/\\/g, "/"));
+    try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); (doc as any).built = { ...((doc as any).built ?? {}), resolume: new Date().toISOString() }; publishCueNumbers(doc, cues); persist(); res.json({ ok: true, ops: n }); }
     catch (e: any) { res.status(502).json({ error: e.message, hint: "Resolume Arena 7.8+ with Webserver enabled (Preferences → Webserver), on this machine or a reachable IP" }); }
   });
 
@@ -352,7 +401,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/import/showcall", (q, res) => { const extra = fromShowCall(cues, q.body?.cues ?? q.body ?? []); doc.customCues = [...(doc.customCues ?? []).filter((c) => !String(c.id).startsWith("SC.")), ...extra]; persist(); res.json({ ok: true, imported: extra.length, cues: cues.length }); });
   app.post("/api/import/pixelmapper", (q, res) => { const r = fromPixelMapper(q.body); doc.screens = r.screens; doc.surfaces = r.surfaces; (doc as any).screenWords = r.screenWords; doc.review.flags = [...doc.review.flags.filter((f) => !/placeholder/i.test(f)), ...r.flags]; persist(); res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, flags: r.flags, cues: cues.length }); });
   app.get("/api/content-guide", (_q, res) => res.json(contentGuideRows(doc.screens, doc.surfaces)));
-  app.post("/api/bundle", async (q, res) => { const outDir = q.body?.outDir ?? join(process.cwd(), "out", doc.event.id); const files = await buildBundle(doc, cues, { outDir, companion: { mode: q.body?.mode ?? "bridge", surfaceHost: q.body?.host ?? `127.0.0.1:${cfg.port ?? 8090}` } }); res.json({ ok: true, outDir, files }); });
+  app.post("/api/bundle", guard(async (q, res) => { const outDir = q.body?.outDir ?? join(process.cwd(), "out", doc.event.id); ensureClearStill(mediaRootOf()); const files = await buildBundle(doc, cues, { outDir, mediaRoot: mediaRootOf().replace(/\\/g, "/"), companion: { mode: q.body?.mode ?? "bridge", surfaceHost: q.body?.host ?? `127.0.0.1:${cfg.port ?? 8090}` } }); publishCueNumbers(doc, cues); persist(); res.json({ ok: true, outDir, files }); }));
   app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length, project: activeId }));
   app.get("/api/cues", (_q, res) => res.json(cues));
   app.get("/api/state", (_q, res) => res.json(runner.getState()));
@@ -380,7 +429,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     io.emit("health", engineView()); res.json(engineView());
   });
   app.post("/api/cue/:n/go", async (q, res) => { const c = await runner.go(Number(q.params.n)); c ? res.json({ ok: true, cue: { n: c.n, id: c.id, name: c.name } }) : res.status(404).json({ ok: false, error: `no cue ${q.params.n}` }); });
-  app.post("/api/cue/:id/go-by-id", async (q, res) => { const c = cues.find((x) => x.id === q.params.id); c ? res.json({ ok: true, cue: await runner.go(c.n) }) : res.status(404).json({ ok: false }); });
+  app.post("/api/cue/:id/go-by-id", async (q, res) => { const c = cues.find((x) => x.id === q.params.id); if (!c) return res.status(404).json({ ok: false, error: `no cue ${q.params.id}` }); const fired = await runner.go(c.n); res.json({ ok: true, cue: fired ? { n: fired.n, id: fired.id, name: fired.name } : null }); });
   app.post("/api/next", async (_q, res) => res.json({ ok: true, cue: (await runner.next())?.id ?? null }));
   app.post("/api/prev", async (_q, res) => res.json({ ok: true, cue: (await runner.prev())?.id ?? null }));
   app.post("/api/panic", async (_q, res) => { await runner.panic(); res.json({ ok: true }); });
@@ -390,17 +439,21 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
 
   if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) app.get(/^(?!\/api|\/socket\.io).*/, (_q, res) => res.sendFile(join(process.env.SURFACE_STATIC!, "index.html")));
   const port = cfg.port ?? 8090;
-  await new Promise<void>((r) => http.listen(port, r));
-  console.log(`Surface ${doc.event.name} — ${cues.length} cues · ${doc.surfaces.length} surfaces · adapters: ${adapters.map((a) => `${a.id}${a.status().connected ? "" : " (offline)"}`).join(", ")} · http://127.0.0.1:${port}`);
+  const bind = cfg.bind ?? "127.0.0.1"; // loopback unless the operator opens it up for Bridge mode (--bind 0.0.0.0)
+  await new Promise<void>((r) => http.listen(port, bind, r));
+  console.log(`Surface ${doc.event.name} — ${cues.length} cues · ${doc.surfaces.length} surfaces · adapters: ${adapters.map((a) => `${a.id}${a.status().connected ? "" : " (offline)"}`).join(", ")} · http://${bind === "0.0.0.0" ? "<this PC's IP>" : bind}:${port}`);
   return { app, http, io, runner, adapters, close: async () => { for (const a of adapters) await a.close(); io.close(); http.close(); } };
 }
 
 if (process.argv[1] && /server[\\/]index\.[tj]s$/.test(process.argv[1])) {
   const args = process.argv.slice(2); const flag = (k: string, d: string) => { const i = args.indexOf(`--${k}`); return i >= 0 ? args[i + 1] : d; };
-  const show = args.find((a) => !a.startsWith("--") && a.endsWith(".json") && !args.includes(`--config`) || a === flag("show", "")) ?? args[0] ?? "show.json";
+  // a positional show file is any .json that is not itself the value of a --flag (argument order must not matter)
+  const flagValues = new Set(args.flatMap((a, i) => (a.startsWith("--") && args[i + 1] ? [args[i + 1]] : [])));
+  const show = flag("show", "") || args.find((a) => !a.startsWith("--") && !flagValues.has(a) && a.endsWith(".json")) || "show.json";
   const cfgFile = flag("config", "surface.config.json");
   const cfg: SurfaceConfig = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : { adapters: [{ type: "mock" }] }; cfg.configFile = cfgFile;
   if (flag("port", "")) cfg.port = Number(flag("port", "8090"));
+  if (flag("bind", "")) cfg.bind = flag("bind", "");
   if (flag("data", "")) cfg.dataDir = flag("data", ""); if (flag("hub", "")) cfg.hubUrl = flag("hub", "");
   startServer(show, cfg).catch((e) => { console.error(e); process.exit(1); });
 }

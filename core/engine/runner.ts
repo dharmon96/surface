@@ -16,6 +16,7 @@ export interface RunnerOpts { now?: () => number; setTimeout?: (fn: () => void, 
 export class Runner {
   private state: RunnerState;
   private timers = new Map<string, any>();
+  private seq = 0;
   private listeners: ((e: RunnerEvent) => void)[] = [];
   private now: () => number; private setT: RunnerOpts["setTimeout"]; private clearT: RunnerOpts["clearTimeout"];
   constructor(public doc: ShowDoc, public cues: Cue[], public adapters: EngineAdapter[], opts: RunnerOpts = {}) {
@@ -38,7 +39,8 @@ export class Runner {
         const surfaces = st.surfaces ?? this.expand(c.scope);
         await this.dispatch([{ kind: "stinger", stinger: st, surfaces, cue: c }]);
         this.emit({ type: "stinger", cue: c, stinger: st } as any);
-        await new Promise<void>((r) => this.arm(`stinger:${n}`, st.coverSec * 1000, r));
+        // unique key per GO: a second press during the cover must not orphan this promise's resolver
+        await new Promise<void>((r) => this.arm(`stinger:${n}:${++this.seq}`, st.coverSec * 1000, r));
       }
     }
     return this.land(c);
@@ -46,6 +48,7 @@ export class Runner {
   private expand(scope: string[]) { return scope.includes("ALL") ? this.doc.surfaces.filter((s) => !s.independent).map((s) => s.id) : scope; }
   private async land(c: Cue): Promise<Cue> {
     const n = c.n; const t = this.now(); const ops: EngineOp[] = [{ kind: "fireCue", cue: c }];
+    for (const k of [...this.timers.keys()]) if (k.startsWith("follow:")) this.cancel(k); // a manual GO outruns any pending follow-on
     for (const target of c.targets) {
       const S = this.state.surfaces[target.surface]; if (!S) continue;
       for (const a of target.actions) {
@@ -59,7 +62,8 @@ export class Runner {
     }
     const round = c.id.match(/\.R(\d\d)$/); if (round) this.state.round = Number(round[1]); if (/\.(WALK|INTRO|TALE|UP_NEXT|HOLD)/.test(c.id) && c.group !== "EVT") this.state.round = null;
     if (c.group !== "EVT" && c.group !== "CUSTOM" && c.group !== "RUNDOWN") this.state.bout = c.group;
-    this.state.current = n; this.state.firedAt = t; this.state.next = this.cues.find((x) => x.n > n)?.n ?? null;
+    this.state.current = n; this.state.firedAt = t;
+    const i = this.cues.findIndex((x) => x.n === n); this.state.next = this.cues[i + 1]?.n ?? null; // list order, not numeric — pinned numbers may not be monotonic
     if (c.follow?.afterSec && typeof c.follow.next === "number") { const nx = c.follow.next; this.arm(`follow:${n}`, c.follow.afterSec * 1000, () => void this.go(nx)); }
     await this.dispatch(ops);
     this.emit({ type: "fired", cue: c, ops }); this.emit({ type: "state", state: this.getState() });

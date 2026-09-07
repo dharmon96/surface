@@ -14,8 +14,12 @@ export function parseBoutSheet(text: string, sourceFile = "bout-sheet.pdf"): Sho
   const lines = text.split(/\r?\n/).map((l) => l.replace(/\s+$/, ""));
   const flags: string[] = [];
   const header = lines.find((l) => /CORNER/i.test(l)) ?? "";
-  const redLeft = header.toUpperCase().indexOf("RED") >= 0 && header.toUpperCase().indexOf("RED") < header.toUpperCase().indexOf("BLUE");
-  if (!header) flags.push("No RED/BLUE CORNER header — assumed RED left, BLUE right");
+  const H = header.toUpperCase();
+  const hasRed = /RED\s+CORNER/.test(H), hasBlue = /BLUE\s+CORNER/.test(H);
+  const redLeft = hasRed && hasBlue ? H.indexOf("RED") < H.indexOf("BLUE") : true;
+  if (!hasRed || !hasBlue) flags.push(header
+    ? `Corner header names only the ${hasRed ? "RED" : hasBlue ? "BLUE" : "??"} corner — assumed RED left, BLUE right; confirm corners`
+    : "No RED/BLUE CORNER header — assumed RED left, BLUE right; confirm corners");
   const updated = text.match(/Last Updated:\s*([^\n]+)|(\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M)/i);
   const fighters: Record<string, any> = {}; const bouts: any[] = []; let fi = 0;
   const heading = /^(.*?)\b(\d{1,2})(?:\/(\d{1,2}))?\s*ROUNDS?\b/i;
@@ -31,6 +35,7 @@ export function parseBoutSheet(text: string, sourceFile = "bout-sheet.pdf"): Sho
     const isTitle = /TITLE|CHAMPIONSHIP|BELT/i.test(pre);
     const network = pre.match(/^(DAZN|ESPN|PBC|SHOWTIME|AMAZON|NETFLIX|TNT)\b/i)?.[1]?.toUpperCase();
     const isMain = /MAIN EVENT/i.test(pre) && !/CO-?MAIN/i.test(pre); const isCoMain = /CO-?MAIN/i.test(pre);
+    if (!wc) flags.push(`Bout heading '${lines[i].trim()}' has no weight class`);
     const mk = (idx: number) => {
       const id = `F${String(++fi).padStart(2, "0")}`;
       const home = homes[idx] ?? ""; const geo = countryFromHometown(home);
@@ -48,10 +53,12 @@ export function parseBoutSheet(text: string, sourceFile = "bout-sheet.pdf"): Sho
   if (!bouts.length) flags.push("No bouts recognised — is this a bout sheet?");
   // Sheets list main event FIRST; running order is the reverse unless the sheet says otherwise. Keep sheet order as 'listed' and
   // assign running order bottom-up so B01 is the opener.
-  const listedMainFirst = bouts[0]?.isMain || (!bouts.some((b) => b.isMain) && (bouts[0]?.rounds ?? 0) >= (bouts[bouts.length - 1]?.rounds ?? 0));
+  const hasMainMarker = bouts.some((b) => b.isMain);
+  const listedMainFirst = bouts[0]?.isMain || (!hasMainMarker && (bouts[0]?.rounds ?? 0) >= (bouts[bouts.length - 1]?.rounds ?? 0));
   if (listedMainFirst) { bouts.reverse(); bouts.forEach((b, i) => { b.order = i + 1; b.id = `B${String(i + 1).padStart(2, "0")}`; }); flags.push("Sheet lists the main event first — running order reversed so B01 is the opener; confirm"); }
-  if (!bouts.some((b) => b.isMain) && bouts.length) bouts[bouts.length - 1].isMain = true;
-  if (!bouts.some((b) => b.isCoMain) && bouts.length > 1) bouts[bouts.length - 2].isCoMain = true;
+  else if (!hasMainMarker && bouts.length > 1) flags.push("No MAIN EVENT marker — kept sheet order (first listed = opener) from round counts; confirm running order");
+  if (!hasMainMarker && bouts.length) { bouts[bouts.length - 1].isMain = true; flags.push("No MAIN EVENT marker — last in running order assumed the main event; confirm"); }
+  if (!bouts.some((b) => b.isCoMain) && bouts.length > 1) { bouts[bouts.length - 2].isCoMain = true; flags.push("No CO-MAIN marker — second-to-last in running order assumed the co-main; confirm"); }
   for (const b of bouts) if (b.title) { const cs = [...new Set([fighters[b.red].country, fighters[b.blue].country])].filter((c) => c !== "??"); if (cs.length > 1 || (cs.length === 1 && cs[0] !== "US")) { b.anthems = cs; flags.push(`Bout ${b.order}: anthems suggested ${cs.join("/")} — confirm`); } }
   flags.push("Bout sheet has no timings, weights or ring names — merge a timing sheet when it arrives");
   flags.push("Screens are placeholders until the venue screen list (PixelMapper) is supplied");

@@ -26,7 +26,7 @@ export class HubClient {
   async me(): Promise<HubSession> { return (await this.req("/api/hub/users/me")).json(); }
   async list(): Promise<HubListItem[]> { return (await this.req(`/api/data/${APP_SLUG}`)).json(); }
   async get<T = unknown>(key: string): Promise<{ key: string; value: T; updated_at: string } | null> { const r = await this.fetchImpl(`${this.base}/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { headers: { "x-hub-session-token": this.token ?? "" } }); if (r.status === 404) return null; if (!r.ok) throw new Error(`GET ${key} → ${r.status}`); return r.json(); }
-  async put(key: string, value: unknown): Promise<void> { await this.req(`/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify(value) }); }
+  async put(key: string, value: unknown): Promise<{ updated_at?: string } | null> { const r = await this.req(`/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify(value) }); try { return await r.json(); } catch { return null; } }
   async delete(key: string): Promise<void> { await this.req(`/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { method: "DELETE" }); }
   // ── other MantaGlow apps' data (read-only): PixelGrid projects and renders live under app slug "pixel"
   async listApp(slug: string): Promise<HubListItem[]> { return (await this.req(`/api/data/${slug}`)).json(); }

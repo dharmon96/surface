@@ -1,7 +1,11 @@
 /* Surface — visual language shared with the MantaGlow hub and its spokes (Time Tracker is the reference):
    General Sans, warm-neutral OKLCH palette, amber primary, glass panels, 1rem radii. Dark is the default for a show-control
    app that lives in dark rooms; light mode is a click away (header toggle, or the OS setting when nothing is chosen). */
-@import url("https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap");
+/* General Sans is bundled (src/fonts, Fontshare's free ITF license) — the app must look right in a venue with no internet */
+@font-face { font-family: "General Sans"; font-weight: 400; font-style: normal; font-display: swap; src: url("./fonts/GeneralSans-400.woff2") format("woff2"); }
+@font-face { font-family: "General Sans"; font-weight: 500; font-style: normal; font-display: swap; src: url("./fonts/GeneralSans-500.woff2") format("woff2"); }
+@font-face { font-family: "General Sans"; font-weight: 600; font-style: normal; font-display: swap; src: url("./fonts/GeneralSans-600.woff2") format("woff2"); }
+@font-face { font-family: "General Sans"; font-weight: 700; font-style: normal; font-display: swap; src: url("./fonts/GeneralSans-700.woff2") format("woff2"); }
 
 :root {
   --font: "General Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -22,8 +26,6 @@
   --thumb-vs: linear-gradient(90deg, oklch(0.48 0.16 25), oklch(0.30 0.02 60) 50%, oklch(0.46 0.14 255)); --thumb-neutral: linear-gradient(160deg, oklch(0.40 0.02 70), oklch(0.26 0.015 65)); --thumb-gold: linear-gradient(160deg, oklch(0.62 0.14 75), oklch(0.36 0.06 70));
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) { :root:not(.light) { --dark: 1; } }
-:root.dark { --dark: 1; }
 @media (prefers-color-scheme: dark) { :root:not(.light) {
   --background: oklch(0.13 0.012 60); --foreground: oklch(0.95 0.012 75);
   --card: oklch(0.17 0.014 65); --muted: oklch(0.20 0.015 65); --muted-fg: oklch(0.68 0.018 75); --faint: oklch(0.50 0.015 70);
@@ -88,8 +90,6 @@ h2, h3, h4 { text-wrap: balance; }
 .tags { display: flex; gap: 6px; align-items: center; }
 .theme { background: transparent; border-color: transparent; color: var(--muted-fg); padding: 4px 8px; font-size: 12px; }
 .main { padding: 0; position: relative; overflow: auto; }
-.empty { position: absolute; inset: 120px 300px auto 40px; z-index: 3; background: var(--glass-bg); backdrop-filter: blur(24px); border: 1px solid var(--glass-border); box-shadow: var(--glass-shadow-elevated); border-radius: var(--radius-lg); padding: 24px 28px; max-width: 560px; }
-.empty h2 { margin: 0 0 8px; font-size: 22px; font-weight: 600; } .empty p { margin: 4px 0; }
 .drawer { position: absolute; inset: 0 0 0 auto; width: min(1100px, 92vw); background: var(--background); border-left: 1px solid var(--glass-border); box-shadow: -20px 0 40px rgba(0,0,0,.35); z-index: 20; display: grid; grid-template-rows: 44px 1fr; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--card); font-weight: 600; }
 .drawer-body { overflow: auto; padding: 16px; }

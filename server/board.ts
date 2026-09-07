@@ -72,9 +72,12 @@ export function buildBoard(i: BoardInputs): Board {
   rows.push({ id: "EVT", kind: "event", order: 0, title: "Holds · flags · VTs", meta: {}, flags: [], cells: ev });
   // bouts
   const bouts = [...(doc.data.bouts ?? [])].sort((a: any, b: any) => a.order - b.order);
+  let anyOpen = false;
   for (const b of bouts) {
     const cs = byGroup.get(b.id) ?? []; const find = (re: RegExp) => cs.filter((c) => re.test(c.id));
+    const open = find(/\.VT_OPEN$/); if (open.length) anyOpen = true;
     const cells: Record<string, BoardCell> = {
+      ...(open.length ? { OPEN: cell("OPEN", "Fight open", open) } : {}),
       WALK_RED: cell("WALK_RED", `${F[b.red]?.name ?? "red"} walkout`, find(/\.WALK_RED$/)),
       WALK_BLUE: cell("WALK_BLUE", `${F[b.blue]?.name ?? "blue"} walkout`, find(/\.WALK_BLUE$/)),
       TALE: cell("TALE", "Fighter v Fighter", find(/\.TALE$/)),
@@ -93,8 +96,9 @@ export function buildBoard(i: BoardInputs): Board {
   const missing: Board["missing"] = [];
   for (const x of all) { const m = x.slots.filter((s) => s.status === "missing"); if (m.length) missing.push({ row: x.row.id, label: x.label, screens: [...new Set(m.map((s) => s.screen))], kind: "missing" }); const cv = x.slots.filter((s) => s.status === "convert" && /letterbox|scale|tile/i.test(s.note ?? "")); if (cv.length && !m.length) missing.push({ row: x.row.id, label: `${x.label} — ${cv[0].note}`, screens: [...new Set(cv.map((s) => s.screen))], kind: "convert" }); }
   const flat = all.flatMap((x) => x.slots); const dedup = new Map(flat.map((s) => [s.slot, s])); const S = [...dedup.values()];
+  const columns = anyOpen ? [{ key: "OPEN", label: "Fight open", sub: "video" }, ...COLUMNS] : COLUMNS;
   return {
-    columns: COLUMNS, rows, screens, missing,
+    columns, rows, screens, missing,
     totals: { slots: S.length, ready: S.filter((s) => s.status === "ready").length, convert: S.filter((s) => s.status === "convert").length, missing: S.filter((s) => s.status === "missing").length, files: i.intake?.probes ?? 0, unmatched: i.intake?.unmatched.length ?? 0 },
     delivery: i.intake ? { dir: i.intake.dir, files: i.intake.probes, scheme: i.intake.scheme, ocrRan: i.intake.ocrRan } : undefined,
   };
