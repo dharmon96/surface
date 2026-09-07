@@ -18,14 +18,15 @@ let serverProc = null;
 function ensureDefaults() {
   const d = userDir(); fs.mkdirSync(d, { recursive: true });
   const show = path.join(d, "show.json"); const cfg = path.join(d, "surface.config.json");
-  if (!fs.existsSync(show)) fs.copyFileSync(path.join(__dirname, "..", "fixtures", "2026-06-13-glendale.bout.json"), show);
+  // first run only: the Glendale sample card becomes the first project (the server imports a loose show.json once)
+  if (!fs.existsSync(show) && !fs.existsSync(path.join(d, "projects")) && !fs.existsSync(`${show}.imported`)) fs.copyFileSync(path.join(__dirname, "..", "fixtures", "2026-06-13-glendale.bout.json"), show);
   if (!fs.existsSync(cfg)) fs.writeFileSync(cfg, JSON.stringify({ port: PORT, adapters: [{ type: "mock" }] }, null, 2));
   return { show, cfg };
 }
 
 function startServer(show, cfg) {
   // tsx is a dev dependency; in a packaged build the server is prebuilt to dist-server/index.js
-  const built = path.join(__dirname, "..", "dist-server", "index.js");
+  const built = path.join(__dirname, "..", "dist-server", "server", "index.js");
   const common = [show, "--config", cfg, "--port", String(PORT), "--data", userDir(), "--hub", HUB];
   const args = fs.existsSync(built) ? [built, ...common] : ["--import", "tsx", path.join(__dirname, "..", "server", "index.ts"), ...common];
   serverProc = spawn(process.execPath, args, { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SURFACE_STATIC: DEV ? "" : path.join(__dirname, "..", "dist") }, stdio: ["ignore", "pipe", "pipe"] });
@@ -70,7 +71,7 @@ ipcMain.handle("hub-signin", async (ev) => {
   const existing = await hubCookie(); if (existing) { const r = await handToServer(tokenFromCookie(existing)); if (r.status === 200) return r.body; }
   const parent = BrowserWindow.fromWebContents(ev.sender);
   const w = new BrowserWindow({ width: 520, height: 720, parent, modal: false, title: "Sign in to MantaGlow", autoHideMenuBar: true, webPreferences: { contextIsolation: true, sandbox: true } });
-  await w.loadURL(`${HUB}/sign-in?redirect=${encodeURIComponent("/apps")}`);
+  await w.loadURL(`${HUB}/login?redirect=${encodeURIComponent("/dashboard")}`);
   return new Promise((resolve) => {
     const t = setInterval(async () => { if (w.isDestroyed()) { clearInterval(t); return resolve({ error: "sign-in window closed" }); } const c = await hubCookie(); if (!c) return; clearInterval(t); const r = await handToServer(tokenFromCookie(c)); if (!w.isDestroyed()) w.close(); resolve(r.status === 200 ? r.body : { error: r.body?.error ?? `hub said ${r.status}` }); }, 800);
     w.on("closed", () => { clearInterval(t); resolve({ error: "sign-in window closed" }); });

@@ -24,7 +24,7 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { readFileSync, existsSync } from "node:fs";
 import { deriveCues, loadShowDoc, mediaManifest } from "../core/index.js";
-import { writeFileSync, readdirSync, statSync } from "node:fs";
+import { writeFileSync, readdirSync, statSync, renameSync } from "node:fs";
 import { join, relative } from "node:path";
 import { probe } from "../core/intake/intake.js";
 import { intake } from "../core/intake/match.js";
@@ -67,7 +67,12 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   const hub = new HubClient(hubState.token, cfg.hubUrl ?? HUB_URL);
   let activeId: string | null = null;
   // the active show: a project when one is open (its show.json), else the file we were started with
-  if (store) { const ix = store.list(); const wanted = existsSync(join(cfg.dataDir!, "active.json")) ? JSON.parse(readFileSync(join(cfg.dataDir!, "active.json"), "utf8")).id : null; if (wanted && store.get(wanted)) { activeId = wanted; showFile = store.path(wanted); } else if (!existsSync(showFile) && ix[0]) { activeId = ix[0].id; showFile = store.path(activeId); } }
+  if (store) {
+    const ix = store.list(); const wanted = existsSync(join(cfg.dataDir!, "active.json")) ? JSON.parse(readFileSync(join(cfg.dataDir!, "active.json"), "utf8")).id : null;
+    if (wanted && store.get(wanted)) { activeId = wanted; showFile = store.path(wanted); }
+    else if (existsSync(showFile) && !showFile.startsWith(join(cfg.dataDir!, "projects"))) { const m = store.create(loadShowDoc(JSON.parse(readFileSync(showFile, "utf8")))); renameSync(showFile, `${showFile}.imported`); activeId = m.id; showFile = store.path(m.id); } // a loose show.json becomes a project once
+    else if (ix[0]) { activeId = ix[0].id; showFile = store.path(activeId); }
+  }
   if (!existsSync(showFile)) { const d = blankShowDoc("Untitled show"); if (store) { const m = store.create(d); activeId = m.id; showFile = store.path(m.id); } else writeFileSync(showFile, JSON.stringify(d, null, 1)); }
 
   let doc = loadShowDoc(JSON.parse(readFileSync(showFile, "utf8"))); let cues = deriveCues(doc, (doc as any).pack);
@@ -185,7 +190,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   return { app, http, io, runner, adapters, close: async () => { for (const a of adapters) await a.close(); io.close(); http.close(); } };
 }
 
-if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
+if (process.argv[1] && /server[\\/]index\.[tj]s$/.test(process.argv[1])) {
   const args = process.argv.slice(2); const flag = (k: string, d: string) => { const i = args.indexOf(`--${k}`); return i >= 0 ? args[i + 1] : d; };
   const show = args.find((a) => !a.startsWith("--") && a.endsWith(".json") && !args.includes(`--config`) || a === flag("show", "")) ?? args[0] ?? "show.json";
   const cfgFile = flag("config", "surface.config.json");

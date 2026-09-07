@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Show-control console for live-event graphics: bout sheet in, Resolume / disguise / Companion out.",
+  "description": "Surface \u2014 show-control console for live-event graphics (MantaGlow)",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -13,8 +13,12 @@
     "build": "vite build",
     "typecheck:ui": "tsc -p tsconfig.app.json --noEmit",
     "app": "electron .",
-    "app:dev": "SURFACE_DEV=1 electron .",
-    "build:server": "tsc -p tsconfig.server.json"
+    "app:dev": "cross-env SURFACE_DEV=1 electron .",
+    "build:server": "tsc -p tsconfig.server.json",
+    "dist": "npm run build && npm run build:server && electron-builder",
+    "dist:win": "npm run build && npm run build:server && electron-builder --win",
+    "dist:mac": "npm run build && npm run build:server && electron-builder --mac",
+    "release": "npm run build && npm run build:server && electron-builder --publish always"
   },
   "dependencies": {
     "cors": "^2.8.6",
@@ -37,7 +41,65 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vite": "^6.4.3",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "electron-builder": "^25.1.8",
+    "cross-env": "^7.0.3"
   },
-  "main": "electron/main.cjs"
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.mantaglow.surface",
+    "productName": "Surface",
+    "copyright": "\u00a9 MantaGlow",
+    "asar": true,
+    "files": [
+      "electron/**",
+      "dist/**",
+      "dist-server/**",
+      "fixtures/2026-06-13-glendale.bout.json",
+      "surface.config.example.json",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Surface-Setup-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "shortcutName": "Surface"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video",
+      "artifactName": "Surface-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "artifactName": "Surface-linux-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "dharmon96",
+        "repo": "surface",
+        "releaseType": "release"
+      }
+    ]
+  }
 }

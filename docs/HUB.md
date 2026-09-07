@@ -38,13 +38,24 @@ works locally.
   },
 ```
 
-(Entry already added to the file on 7 Sep 2026.) Seed it with `npm run db:seed-apps` in `web/` — the script upserts, so the
-other apps are untouched. Then grant access the same way as the other apps (`userAppAccess` with `offlineAccess: true`).
+(Entry added 7 Sep 2026, together with `src/lib/app-metadata.ts`, `app/config/app-styles.ts` and the marketing page.)
+`deploy.sh darianharmon-site` now runs `seed-apps` after migrations, so a push to `web` lists Surface; `npm run db:seed-apps` does it by hand.
 
-## Downloads
+## Downloads and releases
 
-Release artifacts (electron-builder, not yet wired): `Surface-<version>-win-x64.exe` (NSIS), `Surface-<version>-mac-arm64.dmg`.
-Put them on the app's hub page; the app checks nothing at start-up (no auto-update yet), so the hub page is the update channel.
+Installers are built by GitHub Actions (`.github/workflows/release.yml`) — nothing is built on the droplet:
+
+```
+git tag v0.1.0 && git push --tags     # → GitHub Release with Surface-Setup-win-x64.exe, Surface-mac-arm64.dmg, Surface-mac-x64.dmg
+```
+
+`surface.mantaglow.com/download/win|mac|mac-intel` are Caddy redirects (darian-infra/Caddyfile) to
+`github.com/dharmon96/surface/releases/latest/download/<fixed name>`, so the hub's marketing page
+(`web/app/(marketing)/apps/surface/page.tsx`) never needs touching for a new version. Builds are unsigned until a
+certificate is added (CSC_LINK / CSC_KEY_PASSWORD secrets; APPLE_ID for notarization). Local: `npm run dist:win`.
+
+Access: org owners/admins pass `hasAppAccess` automatically once the app row exists; other users need a `userAppAccess`
+row (admin console) — the deploy script now seeds apps on every hub deploy, so pushing `web` is enough.
 
 ## Local layout (Electron `userData`, e.g. `%APPDATA%\Surface`)
 

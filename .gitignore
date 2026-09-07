@@ -4,3 +4,5 @@ examples/
 dist/
 *.log
 .DS_Store
+release/
+dist-server/
