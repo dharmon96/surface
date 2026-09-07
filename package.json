@@ -1,5 +1,5 @@
 {
-  "name": "boutkit",
+  "name": "surface",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "cli": "tsx cli/boutkit.ts"
+    "cli": "tsx cli/surface.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0"

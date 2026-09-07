@@ -1,5 +1,5 @@
 /**
- * BoutKit core model — show-agnostic.
+ * Surface core model — show-agnostic.
  *
  * Surfaces  : a screen or group of screens that always receives the same content.
  * Layers    : fixed stack per surface — BASE (loops underneath), OVERLAY (over the base, cleared not re-cued), FULL (covers all while it runs).

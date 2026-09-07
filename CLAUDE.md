@@ -1,15 +1,15 @@
-# BoutKit — Show-Control Console for Live-Event Graphics
+# Surface — Show-Control Console for Live-Event Graphics
 
 Takes a show's data (first pack: a boxing bout sheet) and produces a screen-aware cue list, then builds Resolume Arena
 compositions, disguise tracks and Bitfocus Companion pages from it — or runs the cues itself. Independent desktop app;
 links to ShowCall (run of show) and PixelMapper (screens) but does not depend on MantaGlow to run.
 
-Plan and research: see the "BoutKit Build Plan" artifact (Claude) — v3, 7 Sep 2026.
+Plan and research: see the "BoutKit Build Plan" artifact (project renamed Surface) (Claude) — v3, 7 Sep 2026.
 
 ## Tech Stack (matches ShowCall / PixelMapper conventions)
 
 - **Core**: pure TypeScript in `core/` — no I/O except `core/gen/cuesheet.ts` (exceljs) and `core/intake` (ffprobe). Everything else is data in / data out so it can be unit-tested and reused by the CLI, the desktop app and MantaGlow.
-- **CLI**: `cli/boutkit.ts` via tsx. **Tests**: vitest (`npm test`). **Typecheck**: `npm run typecheck`.
+- **CLI**: `cli/surface.ts` via tsx. **Tests**: vitest (`npm test`). **Typecheck**: `npm run typecheck`.
 - Planned: `src/` React + Vite + TS UI (Radix, Tailwind, zustand), `server/` Express + Socket.IO for engine adapters and the Bridge API, Electron shell. Same single-package layout as ShowCall.
 
 ## Core model (`core/types.ts`)

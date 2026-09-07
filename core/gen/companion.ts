@@ -1,7 +1,7 @@
 /**
  * Bitfocus Companion page files (.companionconfig, type "page", version 12 -> imports into v4.3 and v5.0).
  * Two targets:
- *   "bridge"  : every GO button calls BoutKit's HTTP API (generic-http module) — BoutKit resolves scope.
+ *   "bridge"  : every GO button calls Surface's HTTP API (generic-http module) — Surface resolves scope.
  *   "direct"  : buttons call resolume-arena (connectColumn) and disguise-osc (cue) modules themselves.
  */
 import { createHash } from "node:crypto";
@@ -14,7 +14,7 @@ const id = (s: string) => createHash("md5").update(s).digest("hex").slice(0, 12)
 const opt = (v: unknown) => ({ isExpression: false, value: String(v) });
 
 export type CompanionMode = "bridge" | "direct";
-export interface CompanionOpts { mode: CompanionMode; boutkitHost?: string; resolumeHost?: string; d3Host?: string }
+export interface CompanionOpts { mode: CompanionMode; surfaceHost?: string; resolumeHost?: string; d3Host?: string }
 
 function button(text: string, bg: number, actions: any[] = [], extra: Partial<{ size: string | number; color: number; feedbacks: any[] }> = {}) {
   return {
@@ -28,7 +28,7 @@ const action = (conn: string, def: string, options: Record<string, unknown>, sal
   ({ type: "action", id: id(salt), connectionId: conn, definitionId: def, upgradeIndex: null, options: Object.fromEntries(Object.entries(options).map(([k, v]) => [k, opt(v)])) });
 
 function goActions(c: Cue, o: CompanionOpts): any[] {
-  if (o.mode === "bridge") return [action("boutkit", "post", { url: `http://${o.boutkitHost ?? "127.0.0.1:8090"}/api/cue/${c.n}/go`, body: "", contenttype: "application/json" }, `bk${c.n}`)];
+  if (o.mode === "bridge") return [action("surface", "post", { url: `http://${o.surfaceHost ?? "127.0.0.1:8090"}/api/cue/${c.n}/go`, body: "", contenttype: "application/json" }, `sf${c.n}`)];
   const a: any[] = [];
   if (c.resolume) a.push(action("arena", "connectColumn", { column: c.resolume.column }, `arena${c.n}`));
   if (c.d3) { const [maj, min] = c.d3.tag.split("."); a.push(action("d3", "cue", { int: Number(maj) * 100 + Number(min) }, `d3${c.n}`)); }
@@ -64,15 +64,15 @@ export function companionPage(doc: ShowDoc, cues: Cue[], boutId: string, page: n
   put(3, 4, b.order > 1 ? button(`◀ BOUT ${b.order - 1}`, C.DARK, [action("internal", "set_page", { page: page - 1 }, `pg${page}-`)]) : button("", C.OFF));
   put(3, 5, K.UP_NEXT ? button("UP NEXT", C.GREEN, goActions(K.UP_NEXT, o)) : button("", C.OFF), K.UP_NEXT);
   put(3, 6, K.UP_NEXT ? button(`BOUT ${b.order + 1} ▶`, C.DARK, [action("internal", "set_page", { page: page + 1 }, `pg${page}+`)]) : button("", C.OFF));
-  put(3, 7, button("PANIC\\nBLACK", C.PANIC, o.mode === "bridge" ? [action("boutkit", "post", { url: `http://${o.boutkitHost ?? "127.0.0.1:8090"}/api/panic`, body: "", contenttype: "application/json" }, "panic")] : [action("arena", "compDisconnectAll", {}, "panic")]));
+  put(3, 7, button("PANIC\\nBLACK", C.PANIC, o.mode === "bridge" ? [action("surface", "post", { url: `http://${o.surfaceHost ?? "127.0.0.1:8090"}/api/panic`, body: "", contenttype: "application/json" }, "panic")] : [action("arena", "compDisconnectAll", {}, "panic")]));
   const instances: Record<string, any> = o.mode === "bridge"
-    ? { boutkit: { label: "boutkit", moduleId: "generic-http", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { prefix: "" } } }
+    ? { boutkit: { label: "surface", moduleId: "generic-http", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { prefix: "" } } }
     : {
       arena: { label: "arena", moduleId: "resolume-arena", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { host: o.resolumeHost ?? "127.0.0.1", useRest: true, webapiPort: 8080, port: 7000 } },
       d3: { label: "d3", moduleId: "disguise-osc", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 1, config: { host: o.d3Host ?? "10.0.0.10", send_port: 7401, recieve_port: 7400 } },
     };
   return {
-    version: 12, type: "page", companionBuild: "boutkit-0.1", oldPageNumber: page, connectionCollections: [], instances,
+    version: 12, type: "page", companionBuild: "surface-0.1", oldPageNumber: page, connectionCollections: [], instances,
     page: { name: `B${String(b.order).padStart(2, "0")} ${last(red)} v ${last(blue)}`, gridSize: { minColumn: 0, maxColumn: 7, minRow: 0, maxRow: 3 }, controls: G },
   };
 }

@@ -1,4 +1,4 @@
-# BoutKit
+# Surface
 
 Show-control console for live-event graphics. Bout sheet in → screen-aware cue list → Resolume Arena, disguise, Bitfocus Companion and a caller's cue sheet out. Run mode fires the engines directly; Bridge mode sits between Companion and the engines; Author-only mode just writes the bundle.
 
