@@ -1,0 +1,23 @@
+# Normalise line endings: LF in the repo, whatever the OS wants in the working tree.
+# Without this, a Windows checkout shows every file as modified (CRLF noise) and real edits drown.
+* text=auto
+
+*.ts text
+*.tsx text
+*.cjs text
+*.css text
+*.html text
+*.json text
+*.md text
+*.yml text
+*.txt text
+*.tsv text
+*.jsonl text
+
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.mov binary
+*.mp4 binary
+*.avc binary
+*.xlsx binary
