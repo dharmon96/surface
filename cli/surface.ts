@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * boutkit build <show.json> [outDir] [--mode bridge|direct] [--host 127.0.0.1:8090]
- * boutkit cues  <show.json>            print the derived cue list
+ * surface build <show.json> [outDir] [--mode bridge|direct] [--host 127.0.0.1:8090]
+ * surface cues  <show.json>            print the derived cue list
  */
 import { readFileSync } from "node:fs";
 import { buildBundle, deriveCues, loadShowDoc } from "../core/index.js";

@@ -4,7 +4,7 @@ Takes a show's data (first pack: a boxing bout sheet) and produces a screen-awar
 compositions, disguise tracks and Bitfocus Companion pages from it — or runs the cues itself. Independent desktop app;
 links to ShowCall (run of show) and PixelMapper (screens) but does not depend on MantaGlow to run.
 
-Plan and research: see the "BoutKit Build Plan" artifact (project renamed Surface) (Claude) — v3, 7 Sep 2026.
+Plan and research: see the "BoutKit Build Plan" artifact in Claude (written before the rename) — v3, 7 Sep 2026.
 
 ## Tech Stack (matches ShowCall / PixelMapper conventions)
 

@@ -44,7 +44,7 @@ export function fromLegacyBoutJson(old: any): ShowDoc {
   const main = bouts.find((b: any) => b.isMain);
   if (main) { const cm = bouts.find((b: any) => b.order === main.order - 1); if (cm) cm.isCoMain = true; }
   return {
-    schema: "boutkit/2.0", source: old.source, event: old.event, screens, surfaces,
+    schema: "surface/2.0", source: old.source, event: old.event, screens, surfaces,
     data: { fighters: old.fighters, bouts, vts: old.vts ?? [] }, routing,
     customCues: old.customCues ?? [], review: old.review ?? { status: "draft", flags: [] },
   };

@@ -13,7 +13,7 @@ export { boxingFightNight, resolve, withCustomCues, fromLegacyBoutJson, companio
 export const packs: Record<string, Pack> = { [boxingFightNight.id]: boxingFightNight };
 
 export function loadShowDoc(json: any): ShowDoc {
-  if (json.schema === "boutkit/2.0") return json as ShowDoc;
+  if (json.schema === "surface/2.0") return json as ShowDoc;
   if (json.schema === "boutkit/1.0") return fromLegacyBoutJson(json);
   throw new Error(`unknown schema ${json.schema}`);
 }

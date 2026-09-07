@@ -66,7 +66,7 @@ export function companionPage(doc: ShowDoc, cues: Cue[], boutId: string, page: n
   put(3, 6, K.UP_NEXT ? button(`BOUT ${b.order + 1} ▶`, C.DARK, [action("internal", "set_page", { page: page + 1 }, `pg${page}+`)]) : button("", C.OFF));
   put(3, 7, button("PANIC\\nBLACK", C.PANIC, o.mode === "bridge" ? [action("surface", "post", { url: `http://${o.surfaceHost ?? "127.0.0.1:8090"}/api/panic`, body: "", contenttype: "application/json" }, "panic")] : [action("arena", "compDisconnectAll", {}, "panic")]));
   const instances: Record<string, any> = o.mode === "bridge"
-    ? { boutkit: { label: "surface", moduleId: "generic-http", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { prefix: "" } } }
+    ? { surface: { label: "surface", moduleId: "generic-http", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { prefix: "" } } }
     : {
       arena: { label: "arena", moduleId: "resolume-arena", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 0, config: { host: o.resolumeHost ?? "127.0.0.1", useRest: true, webapiPort: 8080, port: 7000 } },
       d3: { label: "d3", moduleId: "disguise-osc", enabled: true, isFirstInit: false, lastUpgradeIndex: -1, sortOrder: 1, config: { host: o.d3Host ?? "10.0.0.10", send_port: 7401, recieve_port: 7400 } },

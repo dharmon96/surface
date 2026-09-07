@@ -85,7 +85,7 @@ export interface Cue {
 
 // ───────────────────────────────────────────── show document
 export interface ShowDoc {
-  schema: "boutkit/2.0";
+  schema: "surface/2.0";
   source?: { file: string; kind: string; version?: string; parsedAt?: string };
   event: Record<string, any> & { id: string; name: string; date?: string };
   screens: Screen[];
