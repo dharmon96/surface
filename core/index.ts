@@ -2,15 +2,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Cue, Pack, ShowDoc } from "./types.js";
 import { boxingFightNight } from "./packs/boxing-fightnight.js";
+import { boxingPressConference, boxingWeighIn } from "./packs/boxing-fightweek.js";
 import { resolve, withCustomCues, fromLegacyBoutJson } from "./resolve.js";
 import { companionPage, type CompanionOpts } from "./gen/companion.js";
 import { writeCueSheet } from "./gen/cuesheet.js";
 import { disguiseCueTables, mediaManifest, resolumePlan, resolumeScript } from "./gen/engines.js";
 
 export * from "./types.js";
-export { boxingFightNight, resolve, withCustomCues, fromLegacyBoutJson, companionPage, writeCueSheet, disguiseCueTables, mediaManifest, resolumePlan, resolumeScript };
+export { boxingFightNight, boxingPressConference, boxingWeighIn, resolve, withCustomCues, fromLegacyBoutJson, companionPage, writeCueSheet, disguiseCueTables, mediaManifest, resolumePlan, resolumeScript };
 
-export const packs: Record<string, Pack> = { [boxingFightNight.id]: boxingFightNight };
+export const packs: Record<string, Pack> = { [boxingFightNight.id]: boxingFightNight, [boxingPressConference.id]: boxingPressConference, [boxingWeighIn.id]: boxingWeighIn };
 
 export function loadShowDoc(json: any): ShowDoc {
   if (json.schema === "surface/2.0") return json as ShowDoc;

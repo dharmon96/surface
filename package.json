@@ -7,12 +7,18 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "cli": "tsx cli/surface.ts"
+    "cli": "tsx cli/surface.ts",
+    "server": "node --import tsx server/index.ts"
   },
   "dependencies": {
-    "exceljs": "^4.4.0"
+    "cors": "^2.8.6",
+    "exceljs": "^4.4.0",
+    "express": "^4.22.2",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",

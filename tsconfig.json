@@ -7,8 +7,15 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true
   },
-  "include": ["core", "cli", "tests"]
+  "include": [
+    "core",
+    "cli",
+    "tests",
+    "server"
+  ]
 }

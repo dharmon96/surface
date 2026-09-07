@@ -18,7 +18,7 @@ Plan and research: see the "BoutKit Build Plan" artifact (Claude) — v3, 7 Sep 
 - **Layers per surface**: `BASE` (loops underneath), `OVERLAY` (over the base, *cleared* not re-cued), `FULL` (covers all while it runs).
 - **Behaviour** on media: `loop` · `playHold` (VTs, winner stings) · `playToMarker` (weigh-in scale) · `timed` (round card: N s then revert to base).
 - **Cue**: `n` (== Resolume column, stable once published), `id` like `B08.R01`, `scope` (surfaces or `ALL`), per-surface `targets` of layer actions, optional `transition` (`cut|fade|stinger|dve`), `follow`, engine addresses filled by `core/resolve.ts`.
-- **Pack**: derives cues from `doc.data`. `core/packs/boxing-fightnight.ts` is the first. Numbering there is FIXED — see the header comment; never renumber published cues.
+- **Pack**: derives cues from `doc.data`. `core/packs/boxing-fightnight.ts` (d3 tags N.x), `core/packs/boxing-fightweek.ts` — Press Conference (100+N.x; LED `TABLE_*` surfaces carry one fighter each) and Weigh-in (200+N.x; `SCALE` surface plays the scale file to a marker and pauses). Numbering is FIXED — see header comments; never renumber published cues. Select with `deriveCues(doc, packId)`.
 - **Slot/asset name**: `{GROUP}_{GRAPHIC}[_{VARIANT}]_{SCREEN}_{W}x{H}`.
 
 ## Engine facts (verified Sep 2026)
@@ -55,6 +55,12 @@ npm run cli -- intake show.json examples/Fight\ Night --direction opener-first -
 - `match.ts`: files → slots. A screen is only ever assigned from pixels (probe) or a known venue screen word (`ScreenSynonyms`), never guessed. Event-wide round cards fill every bout's round slot; one per-fighter graphic fills both WALKOUT and FIGHTER when only one was delivered.
 - `transcode.ts`: matched file → engine media under the slot name as ffmpeg argv (data). DXV for Resolume, HAP for disguise, PNG stays; scale/letterbox to the slot; tile rasters wider than 16384 px; strip stray audio except walkouts/VTs; originals deleted only after verification (flag).
 - Real deliveries surveyed in `fixtures/examples-survey/` (`tests/fixtures-deliveries.ts` rebuilds both packages); the media itself lives in `examples/` (git-ignored, 103 GB).
+
+## Engine + server (`core/engine/`, `server/`)
+
+- `Runner` (`core/engine/runner.ts`): show-time state machine — per-surface BASE/OVERLAY/FULL, scoped fire, timed reverts (cancelled when something newer lands on that layer), follow-ons, panic (clears OVERLAY+FULL, keeps BASE), Companion variables. Pure logic; timers injectable.
+- Adapters (`core/engine/adapters.ts`): `MockAdapter` (records), `ResolumeAdapter` (REST: composition column connect for ALL, per-layergroup connect for scoped cues, layer clear for reverts), `DisguiseAdapter` (REST `gototag` per in-scope transport; OSC `/d3/showcontrol/cue` fallback), `CompanionAdapter` (pushes variables as custom variables). Surface order = Resolume group order; 3 layers per group.
+- `server/index.ts`: Express + Socket.IO. Bridge API the generated Companion pages call: `POST /api/cue/:n/go`, `/api/next`, `/api/prev`, `/api/panic`, `/api/text/:key`, `/api/media/ended`; `GET /api/state|cues|variables|health`. Config `surface.config.json` picks adapters (mock by default) — see `surface.config.example.json`. `npm run server -- show.json`.
 
 ## Conventions
 

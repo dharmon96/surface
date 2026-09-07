@@ -1,0 +1,8 @@
+{
+  "port": 8090,
+  "adapters": [
+    { "type": "resolume", "base": "http://127.0.0.1:8080/api/v1" },
+    { "type": "disguise", "host": "10.0.0.10", "rest": true, "oscPort": 7401, "transports": { "MAIN": "MAIN", "RIBBON": "RIBBON", "IMAG_L": "IMAG", "IMAG_R": "IMAG" } },
+    { "type": "companion", "base": "http://127.0.0.1:8000" }
+  ]
+}
