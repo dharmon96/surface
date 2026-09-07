@@ -7,7 +7,7 @@ const cues = deriveCues(doc);
 
 describe("Boxing Fight Night pack on the June 13 Glendale sheet", () => {
   it("derives a deterministic cue list", () => {
-    expect(cues.length).toBe(deriveCues(doc).length);
+    expect(cues.length).toBe(deriveCues(doc).length); expect(cues.find((c) => c.id === "EVT.UP_NEXT_B01")).toBeTruthy();
     expect(cues.map((c) => c.n)).toEqual(cues.map((_, i) => i + 1));
     expect(new Set(cues.map((c) => c.id)).size).toBe(cues.length);
   });

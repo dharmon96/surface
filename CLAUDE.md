@@ -36,6 +36,7 @@ npm run cli -- parse fixtures/text/2026-06-13-glendale-timing.txt show.json
 npm run cli -- merge show.json fixtures/text/2026-06-13-glendale-timing.txt   # later version → diff
 npm run cli -- cues  show.json
 npm run cli -- build fixtures/2026-06-13-glendale.bout.json out --mode bridge
+npm run cli -- intake show.json examples/Fight\ Night --direction opener-first --a red   # read-only mapping + transcode plan
 ```
 
 ## Parsers (`core/parse/`)
@@ -46,6 +47,14 @@ npm run cli -- build fixtures/2026-06-13-glendale.bout.json out --mode bridge
 - `rundown.ts`: TV running order; columns sliced by page geometry (gutters = cuts no word crosses, nearest the midpoint between header words). VT / FF GFX / MC rows become `origin: "rundown"` custom cue candidates.
 - `geo.ts`: hometown → ISO country with confidence; men's weight-class limits for suggestions; record parser. Everything inferred goes to `review.flags`.
 - `mergeSheets(base, incoming)`: later versions merge by fighter name / red-blue pair and return a human diff; fighter ids never change.
+
+## Media intake (`core/intake/`)
+
+- `tokens.ts`: every path level contributes evidence (kind words, bout+side `3a`, round numbers, screen words, written resolutions, names); archive/layered folders are ignored, `_Updates` wins. Folder-vs-file disagreements become `conflicts`.
+- `scheme.ts`: resolves the promoter's numbering for the whole delivery (1 = opener or main; a = red or blue) from files that name a fighter; the sheet is the authority, files are evidence. Unknown → operator confirms (`override`).
+- `match.ts`: files → slots. A screen is only ever assigned from pixels (probe) or a known venue screen word (`ScreenSynonyms`), never guessed. Event-wide round cards fill every bout's round slot; one per-fighter graphic fills both WALKOUT and FIGHTER when only one was delivered.
+- `transcode.ts`: matched file → engine media under the slot name as ffmpeg argv (data). DXV for Resolume, HAP for disguise, PNG stays; scale/letterbox to the slot; tile rasters wider than 16384 px; strip stray audio except walkouts/VTs; originals deleted only after verification (flag).
+- Real deliveries surveyed in `fixtures/examples-survey/` (`tests/fixtures-deliveries.ts` rebuilds both packages); the media itself lives in `examples/` (git-ignored, 103 GB).
 
 ## Conventions
 

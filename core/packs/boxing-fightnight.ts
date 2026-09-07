@@ -67,6 +67,11 @@ export const boxingFightNight: Pack = {
       const t = targets(doc, "FLAG", "EVT", cc, "FULL", LOOP, `${cc} flag`);
       add({ id: `EVT.FLAG_${cc}`, group: "EVT", name: `Anthem flag ${cc}`, origin: "pack", ...t, trigger: `'Please rise' — ${cc} anthem`, d3: { tag: `0.${10 + i}`, transports: t.scope } });
     });
+    // ── pre-show "up next": the first fight, shown before the card starts
+    if (bouts.length) {
+      const b1 = bouts[0]; const t = targets(doc, "UP_NEXT", "EVT", b1.id, "BASE", LOOP, `UP NEXT — ${fighters[b1.red].name} v ${fighters[b1.blue].name}`, () => [...clearFull(), ...clearOverlay()]);
+      add({ id: `EVT.UP_NEXT_${b1.id}`, group: "EVT", name: `Up next — ${fighters[b1.red].name} v ${fighters[b1.blue].name}`, origin: "pack", ...t, trigger: "Pre-show, before first walk", d3: { tag: "0.9", transports: t.scope } });
+    }
     // ── VTs / ads declared in data.vts
     (doc.data.vts ?? []).forEach((vt: { id: string; name: string; durationSec?: number }, i: number) => {
       const t = targets(doc, "VT", "EVT", vt.id, "FULL", HOLD_LAST, vt.name);

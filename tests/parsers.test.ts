@@ -36,7 +36,7 @@ describe("timing sheet parser", () => {
     expect(v.data.fighters[v.data.bouts[5].blue].name).toBe("Jarrell Miller"); expect(v.data.fighters[v.data.bouts[5].blue].weightLbs).toBeNull();
     expect(v.review.flags.some((f) => /HVY/.test(f))).toBe(true);
   });
-  it("feeds the Fight Night pack directly", () => { expect(deriveCues(d).length).toBe(159); }); // 157 + 2 anthem cues the parser suggested for bout 7
+  it("feeds the Fight Night pack directly", () => { expect(deriveCues(d).length).toBe(160); }); // 157 + 2 suggested anthem cues (bout 7) + pre-show up-next
 });
 
 describe("bout sheet parser", () => {
