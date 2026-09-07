@@ -7,12 +7,15 @@
 import type { ShowDoc } from "../types.js";
 import type { FileEvidence } from "./tokens.js";
 
+/** one filename that names a fighter and so votes for a numbering direction — the evidence a confirm card shows */
+export interface SchemeVote { file: string; base: string; fighter: string; sheetBout: number; side: "red" | "blue"; promoterBout: number; promoterSide?: FileEvidence["side"]; reading: "opener-first" | "main-first" }
 export interface Scheme {
   direction: "opener-first" | "main-first" | "unknown";
   aIs: "red" | "blue" | "unknown";
   evidence: string[];
   confidence: number;                     // 0..1
   boutCountMatches: boolean | null;
+  votes: SchemeVote[];
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
@@ -52,7 +55,7 @@ export function resolveScheme(files: FileEvidence[], doc: ShowDoc): Scheme {
   const maxBout = Math.max(0, ...numbered.map((f) => f.bout!));
   const boutCountMatches = numbered.length ? maxBout === N : null;
   if (numbered.length) evidence.push(boutCountMatches ? `files number bouts 1..${maxBout}, sheet has ${N} bouts` : `files number bouts up to ${maxBout} but sheet has ${N} bouts`);
-  let opener = 0, main = 0, aRed = 0, aBlue = 0;
+  let opener = 0, main = 0, aRed = 0, aBlue = 0; const votes: SchemeVote[] = [];
   for (const f of numbered) {
     const named = fightersNamed(f, doc).filter((h) => h.strength >= 0.8);
     for (const h of named) {
@@ -61,6 +64,7 @@ export function resolveScheme(files: FileEvidence[], doc: ShowDoc): Scheme {
       if (asOpener !== asMain) { // the middle bout of an odd card matches both readings — no directional information
         if (asOpener) opener += 1; else main += 1;
         evidence.push(`'${f.base}' names ${h.id} (sheet bout ${h.bout} ${h.side}) → ${asOpener ? "opener-first" : "main-first"}`);
+        votes.push({ file: f.file, base: f.base, fighter: h.id, sheetBout: h.bout, side: h.side, promoterBout: f.bout!, promoterSide: f.side, reading: asOpener ? "opener-first" : "main-first" });
       }
       if (f.side === "a" || f.side === "b") { if ((f.side === "a") === (h.side === "red")) aRed += 1; else aBlue += 1; }
     }
@@ -70,9 +74,9 @@ export function resolveScheme(files: FileEvidence[], doc: ShowDoc): Scheme {
   const aIs = aRed > aBlue ? "red" : aBlue > aRed ? "blue" : "unknown";
   if (direction === "unknown" && numbered.length) evidence.push("no filename names a fighter — numbering direction must be confirmed (1 = opener or main?)");
   if (aIs === "unknown" && numbered.some((f) => f.side === "a" || f.side === "b")) evidence.push("a/b side could not be tied to red/blue from filenames — confirm");
-  const votes = opener + main; const agree = Math.max(opener, main);
-  const confidence = votes ? (agree / votes) * Math.min(1, votes / 3) : 0;
-  return { direction, aIs, evidence, confidence, boutCountMatches };
+  const total = opener + main; const agree = Math.max(opener, main);
+  const confidence = total ? (agree / total) * Math.min(1, total / 3) : 0;
+  return { direction, aIs, evidence, confidence, boutCountMatches, votes };
 }
 
 /** Map a promoter bout number to the sheet's bout order under a scheme. */

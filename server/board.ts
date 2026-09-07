@@ -11,13 +11,13 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ShowDoc, Cue } from "../core/types.js";
+import type { ShowDoc, Cue, ConfirmItem } from "../core/types.js";
 import type { ManifestEntry } from "../core/intake/execute.js";
 
 export type SlotStatus = "ready" | "convert" | "missing";
 export interface BoardSlot { slot: string; screen: string; w: number; h: number; status: SlotStatus; file?: string; out?: string; thumb?: string; note?: string; confidence?: number; audio?: { integratedLufs: number; gainDb: number; targetLufs: number; capped: boolean } }
 export interface BoardCell { key: string; label: string; cues: { n: number; id: string; name: string }[]; slots: BoardSlot[]; status: SlotStatus | "none"; thumb?: string; behaviour?: string }
-export interface BoardRow { id: string; kind: "event" | "bout"; order: number; title: string; red?: { id: string; name: string; country?: string }; blue?: { id: string; name: string; country?: string }; meta: { rounds?: number; weightClass?: string; title?: string; isMain?: boolean; isCoMain?: boolean }; flags: string[]; cells: Record<string, BoardCell>; rounds?: { n: number; cue: number; status: SlotStatus | "none"; slots: BoardSlot[] }[] }
+export interface BoardRow { id: string; kind: "event" | "bout"; order: number; title: string; red?: { id: string; name: string; country?: string }; blue?: { id: string; name: string; country?: string }; meta: { rounds?: number; weightClass?: string; title?: string; isMain?: boolean; isCoMain?: boolean }; flags: string[]; cells: Record<string, BoardCell>; rounds?: { n: number; cue: number; status: SlotStatus | "none"; slots: BoardSlot[] }[]; /** open questions about this row — click one to open the deck there */ asks: { key: string; question: string }[] }
 export interface Board {
   columns: { key: string; label: string; sub?: string }[];
   rows: BoardRow[];
@@ -32,7 +32,7 @@ export const COLUMNS: Board["columns"] = [
   { key: "TALE", label: "Fighter v Fighter" }, { key: "UP_NEXT", label: "Up next" }, { key: "ROUNDS", label: "Rounds" }, { key: "WINNER", label: "Winner" },
 ];
 
-export interface BoardInputs { doc: ShowDoc; cues: Cue[]; intake: { dir: string; probes: number; assignments: { slot: string; file: string; confidence: number; issues: string[] }[]; unmatched: any[]; scheme: any; ocrRan?: number; jobs: { slot: string; action: string; codec: string; out: string[]; notes: string[] }[] } | null; mediaDir?: string; thumbUrl: (absPath: string) => string }
+export interface BoardInputs { doc: ShowDoc; cues: Cue[]; intake: { dir: string; probes: number; assignments: { slot: string; file: string; confidence: number; issues: string[] }[]; unmatched: any[]; scheme: any; ocrRan?: number; jobs: { slot: string; action: string; codec: string; out: string[]; notes: string[] }[] } | null; mediaDir?: string; thumbUrl: (absPath: string) => string; /** the open confirm questions, so each row can show its own */ deck?: ConfirmItem[] }
 
 export function buildBoard(i: BoardInputs): Board {
   const { doc, cues } = i;
@@ -69,7 +69,9 @@ export function buildBoard(i: BoardInputs): Board {
   const vts = cues.filter((c) => /^VT\./.test(c.id) || c.group === "VT"); if (vts.length) ev.VTS = cell("VTS", `VT ×${vts.length}`, vts);
   const first = evt.find((c) => c.id.startsWith("EVT.UP_NEXT_")); if (first) ev.UP_NEXT = cell("UP_NEXT", "Up next (pre-show)", [first]);
   const test = evt.find((c) => c.id === "EVT.TEST"); if (test) ev.TEST = cell("TEST", "Test patterns", [test]);
-  rows.push({ id: "EVT", kind: "event", order: 0, title: "Holds · flags · VTs", meta: {}, flags: [], cells: ev });
+  // questions with no fighter of their own (numbering, sides, a hold) belong to the event row
+  const evtAsks = (i.deck ?? []).filter((c) => c.anchor?.cell?.startsWith("EVT.") || (c.source === "delivery" && !c.anchor?.fighters?.length)).map((c) => ({ key: c.key, question: c.question }));
+  rows.push({ id: "EVT", kind: "event", order: 0, title: "Holds · flags · VTs", meta: {}, flags: [], cells: ev, asks: evtAsks });
   // bouts
   const bouts = [...(doc.data.bouts ?? [])].sort((a: any, b: any) => a.order - b.order);
   let anyOpen = false;
@@ -86,7 +88,8 @@ export function buildBoard(i: BoardInputs): Board {
     };
     const rounds = find(/\.R\d\d$/).map((c) => { const slots = slotsOf([c]); return { n: Number(c.id.slice(-2)), cue: c.n, status: worst(slots), slots }; });
     const flagsForRow = (doc.review.flags ?? []).filter((f) => new RegExp(`^Bout ${b.order}\\b|\\b${b.id}\\b`).test(f));
-    rows.push({ id: b.id, kind: "bout", order: b.order, title: `${F[b.red]?.name ?? "?"} v ${F[b.blue]?.name ?? "?"}`, red: { id: b.red, name: F[b.red]?.name ?? "?", country: F[b.red]?.country }, blue: { id: b.blue, name: F[b.blue]?.name ?? "?", country: F[b.blue]?.country }, meta: { rounds: b.rounds, weightClass: b.weightClass, title: b.title, isMain: b.isMain, isCoMain: b.isCoMain }, flags: flagsForRow, cells, rounds });
+    const asks = (i.deck ?? []).filter((c) => c.anchor?.fighters?.length && c.anchor.fighters.every((f) => f === b.red || f === b.blue)).map((c) => ({ key: c.key, question: c.question }));
+    rows.push({ id: b.id, kind: "bout", order: b.order, title: `${F[b.red]?.name ?? "?"} v ${F[b.blue]?.name ?? "?"}`, red: { id: b.red, name: F[b.red]?.name ?? "?", country: F[b.red]?.country }, blue: { id: b.blue, name: F[b.blue]?.name ?? "?", country: F[b.blue]?.country }, meta: { rounds: b.rounds, weightClass: b.weightClass, title: b.title, isMain: b.isMain, isCoMain: b.isCoMain }, flags: flagsForRow, cells, rounds, asks });
   }
 
   // per-screen coverage, missing list, totals

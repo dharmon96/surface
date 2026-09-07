@@ -25,8 +25,10 @@ import { readFileSync, existsSync } from "node:fs";
 import { deriveCues, loadShowDoc, mediaManifest, publishCueNumbers } from "../core/index.js";
 import { writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve as resolvePath, sep } from "node:path";
-import { probe } from "../core/intake/intake.js";
-import { intake } from "../core/intake/match.js";
+import { probe, type Probe } from "../core/intake/intake.js";
+import { intake, type IntakeOptions } from "../core/intake/match.js";
+import { deliveryItems } from "../core/intake/confirm.js";
+import { deck, applyDecision, intakeOptionsFrom, decisionText, isDocKind } from "../core/review.js";
 import { planTranscodes } from "../core/intake/transcode.js";
 import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
 import { ocrAvailable, ocrFile, type OcrResult } from "../core/intake/ocr.js";
@@ -39,7 +41,7 @@ import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter, CompanionAdapter } from "../core/engine/adapters.js";
 import type { EngineAdapter } from "../core/engine/adapter.js";
-import type { ShowDoc, OutputCanvas } from "../core/types.js";
+import type { ShowDoc, OutputCanvas, ConfirmItem } from "../core/types.js";
 import { parseSheet } from "../core/parse/index.js";
 import { HubClient, HUB_URL } from "../core/hub/client.js";
 import { ProjectStore, blankShowDoc, type HubState } from "./projects.js";
@@ -114,7 +116,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   /** file-serving endpoints (?f=<abs>) only ever serve from the show's own directories — never the whole disk */
   const allowedFile = (f: string) => {
     if (!f) return false;
-    const roots = [doc.mediaRoot, lastIntake?.dir, lastIntake?.mediaDir, mediaRootOf()].filter(Boolean) as string[];
+    const roots = [doc.mediaRoot, lastIntake?.dir, lastIntake?.mediaDir, doc.delivery?.dir, mediaRootOf()].filter(Boolean) as string[];
     const rf = resolvePath(f).toLowerCase();
     return roots.some((r) => { const rr = resolvePath(r).toLowerCase(); return rf === rr || rf.startsWith(rr + sep); });
   };
@@ -142,7 +144,8 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
 
   // ── authoring endpoints used by the desktop UI
   app.get("/api/doc", (_q, res) => res.json(doc));
-  app.put("/api/doc", (q, res) => { setShow(loadShowDoc(q.body)); res.json({ ok: true, cues: cues.length }); });
+  // a stale Card-details draft must not erase answers given since it was loaded: live decisions win
+  app.put("/api/doc", (q, res) => { const body = loadShowDoc(q.body); setShow({ ...body, decisions: { ...(body.decisions ?? {}), ...(doc.decisions ?? {}) } }); res.json({ ok: true, cues: cues.length }); });
   app.post("/api/review/approve", (_q, res) => { doc.review.status = "approved"; persist(); res.json({ ok: true }); });
 
   // ── hub account + projects (the dashboard)
@@ -187,10 +190,13 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/projects/sync", guard(async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); }));
   app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
   const mediaDirFor = (dir: string, outDir?: string) => outDir ?? join(dir, "..", "media");
-  /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
-  async function runIntake(dir: string, o: { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string }) {
+  type IntakeRunOpts = { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string };
+  /** the last delivery read, kept in memory so an answer can re-match without probing (or re-OCRing) hundreds of files again */
+  let last: { dir: string; probes: Probe[]; unreadable: { file: string; why: string }[]; ocr: Record<string, OcrResult>; ocrRan: number; opts: IntakeRunOpts } | null = null;
+  /** Walk + probe the promoter's folder (parallel ffprobe with live progress) into the `last` cache. */
+  async function probeDelivery(dir: string) {
     const walk = (d: string): string[] => { try { return readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(mov|mp4|mxf|avi|png|jpe?g|tif|webp)$/i.test(f) ? [p] : []; }); } catch { return []; } };
-    const files = walk(dir); const probes: Awaited<ReturnType<typeof probe>>[] = []; const unreadable: { file: string; why: string }[] = [];
+    const files = walk(dir); const probes: Probe[] = []; const unreadable: { file: string; why: string }[] = [];
     // probe in parallel (each is its own ffprobe process) with live progress — a real delivery is hundreds of files,
     // and a silent minute of serial probing reads as "hung" from the board
     let probed = 0, idx = 0;
@@ -203,32 +209,41 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
         probed++; if (probed % 10 === 0 || probed === files.length) io.emit("intake", { phase: "probing", done: probed, total: files.length });
       }
     }));
+    last = { dir, probes, unreadable, ocr: {}, ocrRan: 0, opts: {} };
+  }
+  /** Match the cached probes → (OCR the stragglers, once) → plan; the operator's answers feed the scheme override and
+   *  per-file placements; the delivery's open questions replace the previous run's in review.items / review.flags. */
+  async function matchAndPlan(o: IntakeRunOpts) {
+    if (!last) throw new Error("no delivery in memory — check the folder again");
+    const { dir, probes, unreadable } = last;
     const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
     const man = mediaManifest(doc, cues);
-    let r = intake(doc, man, probes, syn, { override: o.override });
+    const dec = intakeOptionsFrom(doc);
+    const override = { direction: o.override?.direction ?? dec.override.direction, aIs: o.override?.aIs ?? dec.override.aIs };
+    const opts: IntakeOptions = { override, assign: dec.assign, ocr: last.ocr };
+    let r = intake(doc, man, probes, syn, opts);
     // second pass: OCR only the files the first pass could not place confidently, then match again with the words it read
-    let ocrRan = 0; if (o.ocr && (await ocrAvailable())) {
+    if (o.ocr && !Object.keys(last.ocr).length && (await ocrAvailable())) {
       const weak = new Set([...r.unmatched.map((u) => u.file), ...r.assignments.filter((a) => a.confidence < 0.7).map((a) => a.file)]);
-      const ocr: Record<string, OcrResult> = {}; const list = probes.filter((p) => weak.has(p.file)); let i = 0;
-      await Promise.all(Array.from({ length: 3 }, async () => { for (let p = list[i++]; p; p = list[i++]) { try { ocr[p.file] = await ocrFile(join(dir, p.file), p); ocrRan++; io.emit("intake", { phase: "ocr", file: p.file, done: ocrRan, total: list.length }); } catch {} } }));
-      r = intake(doc, man, probes, syn, { override: o.override, ocr });
+      const list = probes.filter((p) => weak.has(p.file)); let i = 0; const cache = last;
+      await Promise.all(Array.from({ length: 3 }, async () => { for (let p = list[i++]; p; p = list[i++]) { try { cache.ocr[p.file] = await ocrFile(join(dir, p.file), p); cache.ocrRan++; io.emit("intake", { phase: "ocr", file: p.file, done: cache.ocrRan, total: list.length }); } catch {} } }));
+      r = intake(doc, man, probes, syn, opts);
     }
     const jobs = planTranscodes(r.assignments, probes, man, { engine: o.engine ?? "resolume", outDir: mediaDirFor(dir, o.outDir) });
-    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: [...r.ignored, ...unreadable], unfilled: r.unfilled, issues: r.issues, jobs };
-    // every delivery-level inference lands in review.flags — the "N to confirm" chip must see what intake decided
+    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan: last.ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: [...r.ignored, ...unreadable], unfilled: r.unfilled, issues: r.issues, jobs };
+    // every delivery-level inference lands in review.flags (and, typed, in review.items) — replaced per run, sheet items untouched
     const marker = "Delivery: ";
-    const infFlags: string[] = [];
-    if (!o.override?.direction && r.scheme.direction !== "unknown") infFlags.push(`${marker}numbering read from filenames — 1 = ${r.scheme.direction === "opener-first" ? "the opener" : "the main event"} (confidence ${Math.round(r.scheme.confidence * 100)}%); confirm`);
-    if (!o.override?.aIs && r.scheme.aIs !== "unknown") infFlags.push(`${marker}sides read from filenames — a = ${r.scheme.aIs}; confirm`);
-    const byAspect = r.assignments.filter((a) => a.reasons.some((x) => x.startsWith("same shape as"))).length;
-    if (byAspect) infFlags.push(`${marker}${byAspect} graphic(s) matched a screen by shape only, not exact pixels — check their thumbnails on the board`);
-    if (unreadable.length) infFlags.push(`${marker}${unreadable.length} file(s) could not be read at all — see the Media list`);
-    const kept = doc.review.flags.filter((f) => !f.startsWith(marker));
-    if (infFlags.length || kept.length !== doc.review.flags.length) { doc.review.flags = [...kept, ...infFlags]; persist(); }
+    const d = deliveryItems(r, doc, opts, unreadable);
+    const kept = doc.review.flags.filter((f) => !f.startsWith(marker)); const keptItems = (doc.review.items ?? []).filter((i) => i.source !== "delivery");
+    doc.review = { ...doc.review, flags: [...kept, ...d.flags], items: [...keptItems, ...d.items] };
+    doc.delivery = { dir, at: new Date().toISOString() };
+    persist();
     io.emit("intake", { phase: "done", files: probes.length, matched: r.assignments.length, unmatched: r.unmatched.length });
     io.emit("board", { type: "board", reason: "intake" });
     return lastIntake;
   }
+  /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
+  const runIntake = async (dir: string, o: IntakeRunOpts) => { await probeDelivery(dir); last!.opts = o; return matchAndPlan(o); };
   app.post("/api/intake", guard(async (q, res) => { const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); res.json(await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr, engine: q.body?.engine, outDir: q.body?.outDir })); }));
   app.get("/api/intake", (_q, res) => res.json(lastIntake));
   app.get("/api/versions", (_q, res) => res.json((doc as any).versions ?? []));
@@ -241,6 +256,13 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress, levelMatch: levelMatchOpts() }); absorbManifest(lastIntake.mediaDir); }
     catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
+  /** run the last plan (Prepare's tail, and the re-conversion after an answer moves files); originals deleted only when asked */
+  const convert = async (deleteOriginals: boolean, concurrency = 2) => {
+    transcodeRun = { running: true, started: new Date().toISOString(), events: [] };
+    const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency, deleteOriginals, onProgress, levelMatch: levelMatchOpts() }); absorbManifest(lastIntake.mediaDir); }
+    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("prepare", { phase: "done" }); io.emit("board", { type: "board", reason: "transcode" }); }
+  };
   // ── the board's one button: intake with everything inferred, then convert; originals deleted only if asked (after verify)
   app.post("/api/prepare", async (q, res) => {
     const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); if (transcodeRun.running) return res.status(409).json({ error: "already converting" });
@@ -248,10 +270,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     try { await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr ?? true, engine: q.body?.engine ?? "resolume", outDir: doc.mediaRoot }); if (!doc.mediaRoot) setShow({ ...doc, mediaRoot: lastIntake.mediaDir }); } catch (e: any) { io.emit("prepare", { phase: "failed", detail: e.message }); return res.status(500).json({ error: e.message }); }
     res.json({ ok: true, files: lastIntake.probes, jobs: lastIntake.jobs.length, scheme: lastIntake.scheme });
     if (q.body?.convert === false || !lastIntake.jobs.length) { io.emit("prepare", { phase: "done" }); return; }
-    transcodeRun = { running: true, started: new Date().toISOString(), events: [] };
-    const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
-    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress, levelMatch: levelMatchOpts() }); absorbManifest(lastIntake.mediaDir); }
-    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("prepare", { phase: "done" }); io.emit("board", { type: "board", reason: "transcode" }); }
+    void convert(!!q.body?.deleteOriginals, Number(q.body?.concurrency ?? 2));
   });
   // ── the Card Board itself, the promoter request, thumbnails
   const thumbDir = join(cfg.dataDir ?? tmpdir(), "surface-thumbs"); mkdirSync(thumbDir, { recursive: true });
@@ -262,7 +281,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     void proxies.build(f); res.status(202).json({ building: true });
   }));
   const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
-  const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl });
+  const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl, deck: deck(doc) });
   app.get("/api/board", (_q, res) => res.json(board()));
   app.get("/api/board/request", (_q, res) => res.type("text/plain").send(promoterRequest(board(), doc)));
   app.get("/api/thumb", guard(async (q, res) => {
@@ -327,17 +346,84 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     res.json({ ...o, screens, current: live.current });
   });
   // ── a newer sheet dropped on the open project: merge (fighter ids stay, graphics follow the fighter), keep the diff
-  app.post("/api/sheet", (q, res) => {
+  app.post("/api/sheet", guard(async (q, res) => {
     const text: string = typeof q.body === "string" ? q.body : q.body?.text; const file: string = q.body?.file ?? "sheet.txt"; if (!text) return res.status(400).json({ error: "text required" });
     const r = parseSheet(text, file); if ("kind" in r && r.kind === "rundown") return res.status(422).json({ error: "that is a TV running order, not a bout/timing sheet" });
     const inc = r as ShowDoc; const hasBouts = (doc.data.bouts ?? []).length > 0;
     if (!hasBouts) {
-      const keep = { screens: doc.screens, surfaces: doc.surfaces, screenWords: (doc as any).screenWords, stingers: doc.stingers, transitions: doc.transitions, pack: (doc as any).pack };
+      const keep = { screens: doc.screens, surfaces: doc.surfaces, screenWords: (doc as any).screenWords, stingers: doc.stingers, transitions: doc.transitions, pack: (doc as any).pack, decisions: doc.decisions, delivery: doc.delivery };
       const next = { ...inc, ...keep, event: { ...inc.event, ...(doc.event.name !== "Untitled show" ? { name: doc.event.name } : {}) }, versions: [{ file, at: new Date().toISOString(), diff: ["first sheet"] }] } as unknown as ShowDoc;
       setShow(next); return res.json({ ok: true, diff: ["first sheet"], flags: next.review.flags });
     }
-    const m = mergeSheets(doc, inc); (m.doc as any).versions = [...((doc as any).versions ?? []), { file, at: new Date().toISOString(), diff: m.diff }]; setShow(m.doc); res.json({ ok: true, diff: m.diff, flags: m.doc.review.flags });
-  });
+    const m = mergeSheets(doc, inc); (m.doc as any).versions = [...((doc as any).versions ?? []), { file, at: new Date().toISOString(), diff: m.diff }]; setShow(m.doc);
+    // the card moved under the delivery: re-match from the cached probes so the board is right immediately
+    if (last && Object.keys(doc.decisions ?? {}).length) { try { await matchAndPlan(last.opts); } catch {} }
+    res.json({ ok: true, diff: m.diff, flags: m.doc.review.flags });
+  }));
+
+  // ── the confirm deck: every open question with its evidence, one answer at a time
+  /** attach the URLs the deck needs for thumbnails and hold loops (files are delivery-relative) */
+  const withUrls = (i: ConfirmItem) => {
+    const dir = doc.delivery?.dir; const isVideo = (f: string) => !/\.(png|jpe?g|tif|webp)$/i.test(f);
+    const files = [...(i.evidence?.files ?? []), ...i.options.map((o) => o.file).filter(Boolean) as string[]];
+    const thumbs: Record<string, string> = {}; const proxies: Record<string, string> = {};
+    if (dir) for (const f of files) { const abs = join(dir, f); thumbs[f] = thumbUrl(abs); if (isVideo(f)) proxies[f] = `/api/proxy?f=${encodeURIComponent(abs)}`; }
+    const bout = i.anchor?.fighters?.length ? (doc.data.bouts ?? []).find((b: any) => i.anchor!.fighters!.every((f) => f === b.red || f === b.blue))?.id : undefined;
+    return { ...i, bout, thumbs, proxies, options: i.options.map((o) => (o.file ? { ...o, thumb: thumbs[o.file], proxy: proxies[o.file] } : o)) };
+  };
+  const confirmView = () => {
+    const items = deck(doc).map(withUrls);
+    const byKey = new Map((doc.review.items ?? []).map((i) => [i.key, i]));
+    const answered = Object.entries(doc.decisions ?? {}).map(([key, d]) => ({ key, kind: d.kind, question: byKey.get(key)?.question ?? d.text, text: d.text, at: d.at }));
+    // an answer about the graphics needs the folder in memory to take effect
+    const needsFiles = Object.keys(doc.decisions ?? {}).some((k) => k === "numbering" || k === "sides" || k.startsWith("assign:"));
+    return { count: items.length, items, answered, rematchNeeded: !!doc.delivery && !last && needsFiles };
+  };
+  app.get("/api/confirm", (_q, res) => res.json(confirmView()));
+  app.post("/api/confirm", guard(async (q, res) => {
+    const { key, option, value } = q.body ?? {};
+    if (!key) return res.status(400).json({ error: "key required" });
+    const item = deck(doc).find((i) => i.key === key); if (!item) return res.status(404).json({ error: "that question is no longer open" });
+    const opt = item.options.find((o) => o.id === option);
+    let v: any;
+    if (opt?.input === "text") {
+      v = String(value ?? "").trim(); if (!v) return res.status(400).json({ error: "type a value" });
+      if (item.kind === "country") { v = v.toUpperCase(); if (!/^[A-Z]{2}$/.test(v)) return res.status(400).json({ error: "two-letter country code" }); }
+    } else {
+      if (!opt) return res.status(400).json({ error: "pick one of the options" });
+      v = item.kind === "file-side" ? (option === "skip" ? { skip: true } : { fighter: option })
+        : item.kind === "hold-variant" ? (option === "skip" ? { skip: true } : { variant: option })
+        : item.kind === "aspect" ? (option === "skip" ? { skip: true } : { ok: true })
+        : item.kind === "rounds" ? Number(option)
+        : item.kind === "anthems" ? String(option).split(",").filter(Boolean)
+        : option;
+    }
+    const was = item.options.find((o) => o.suggested)?.id;
+    doc.decisions = { ...(doc.decisions ?? {}), [key]: { kind: item.kind, value: v, at: new Date().toISOString(), text: decisionText(item, v), was } };
+    const a = applyDecision(doc, item, v);
+    persist();
+    let rematched = false, converting = 0;
+    if (a.rematch && last) {
+      await matchAndPlan(last.opts); rematched = true;
+      // an answer never deletes the promoter's originals — only the operator's own checkbox does that
+      if (lastIntake.jobs.length && !transcodeRun.running) { converting = lastIntake.jobs.length; void convert(false); }
+    }
+    const view = confirmView();
+    res.json({ ok: true, applied: a.changed, rematched, converting, rematchNeeded: a.rematch && !last && !!doc.delivery, next: view.items[0] ?? null, count: view.count });
+  }));
+  app.post("/api/confirm/forget", guard(async (q, res) => {
+    const key = String(q.body?.key ?? ""); const d = doc.decisions?.[key];
+    if (!d) return res.status(404).json({ error: "no answer recorded for that" });
+    delete doc.decisions![key];
+    // put the card's own reading back so the doc matches what the deck will suggest again
+    const item = (doc.review.items ?? []).find((i) => i.key === key);
+    if (item && d.was !== undefined && isDocKind(item.kind)) {
+      applyDecision(doc, item, item.kind === "rounds" ? Number(d.was) : item.kind === "anthems" ? String(d.was).split(",").filter(Boolean) : d.was);
+    }
+    persist();
+    if (last && (key === "numbering" || key === "sides" || key.startsWith("assign:") || isDocKind(d.kind))) { try { await matchAndPlan(last.opts); } catch {} }
+    res.json(confirmView());
+  }));
   // ── screens from PixelGrid: exported screen-map PNGs (one per screen, 1:1 pixels, test pattern baked in) or the project via the hub
   const placeholders = () => doc.review.flags.some((f) => /placeholder/i.test(f));
   /** copy a test-pattern image under <mediaRoot>/_TEST and point the screen + the EVT.TEST slot at it */
@@ -414,7 +500,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/import/pixelmapper", (q, res) => { const r = fromPixelMapper(q.body); doc.screens = r.screens; doc.surfaces = r.surfaces; (doc as any).screenWords = r.screenWords; doc.review.flags = [...doc.review.flags.filter((f) => !/placeholder/i.test(f)), ...r.flags]; persist(); res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, flags: r.flags, cues: cues.length }); });
   app.get("/api/content-guide", (_q, res) => res.json(contentGuideRows(doc.screens, doc.surfaces)));
   app.post("/api/bundle", guard(async (q, res) => { const outDir = q.body?.outDir ?? join(process.cwd(), "out", doc.event.id); ensureClearStill(mediaRootOf()); const files = await buildBundle(doc, cues, { outDir, mediaRoot: mediaRootOf().replace(/\\/g, "/"), companion: { mode: q.body?.mode ?? "bridge", surfaceHost: q.body?.host ?? `127.0.0.1:${cfg.port ?? 8090}` } }); publishCueNumbers(doc, cues); persist(); res.json({ ok: true, outDir, files }); }));
-  app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length, project: activeId }));
+  app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length, project: activeId, confirm: deck(doc).length }));
   app.get("/api/cues", (_q, res) => res.json(cues));
   app.get("/api/state", (_q, res) => res.json(runner.getState()));
   app.get("/api/variables", (_q, res) => res.json(runner.variables()));

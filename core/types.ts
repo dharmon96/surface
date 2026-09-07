@@ -105,7 +105,11 @@ export interface ShowDoc {
   stingers?: Stinger[];
   /** default transition per graphic type, e.g. { WINNER: "stinger:whoosh", UP_NEXT: "stinger:whoosh" } */
   transitions?: Record<string, string>;
-  review: { status: "draft" | "approved"; flags: string[] };
+  review: { status: "draft" | "approved"; flags: string[]; items?: ConfirmItem[] };
+  /** operator answers by ConfirmItem.key; top-level so mergeSheets' review replacement never touches them */
+  decisions?: Record<string, Decision>;
+  /** the promoter's folder the last Prepare read — cards, thumbnails and re-match survive a restart */
+  delivery?: { dir: string; at: string };
   /** every sheet version merged in, newest last, with the human diff */
   versions?: { file: string; at: string; diff: string[] }[];
   /** how the engine composition is laid out — see core/engine/adapter.ts.
@@ -138,6 +142,36 @@ export interface OutputCanvas {
   fit?: "1:1" | "scale" | "letterbox" | "stretch";
   pixelMapper?: { canvasId?: string; processor?: string };
 }
+
+// ───────────────────────────────────────────── confirm flow (questions the parsers and intake leave open)
+export type ConfirmKind =
+  | "corners" | "running-order" | "main" | "walk-order"            // sheet-wide, from the parsers
+  | "country" | "rounds" | "weight-class" | "anthems"              // per fighter / per bout, from the parsers
+  | "numbering" | "sides" | "file-side" | "hold-variant" | "aspect" // from intake (delivery)
+  | "note";                                                        // fallback: a plain sentence
+export interface ConfirmOption {
+  id: string;                 // the value for this option; "other" = free text
+  label: string;              // operator copy
+  hint?: string;              // small grey line
+  file?: string;              // delivery-relative file whose thumbnail/loop IS the evidence for this option
+  tone?: "red" | "blue";
+  suggested?: boolean;        // at most one per item: what is applied right now (Enter picks it)
+  input?: "text";             // free-text option; the typed string is the value
+}
+export interface ConfirmItem {
+  key: string;                // decision key — stable across re-parse, merge, re-prepare
+  kind: ConfirmKind;
+  source: "sheet" | "delivery";
+  question: string;
+  detail?: string;            // why we ask (header line, filename, sizes)
+  options: ConfirmOption[];
+  evidence?: { files?: string[]; sheet?: string[]; ocr?: string[] };  // files delivery-relative; sheet = verbatim lines
+  anchor?: { fighters?: string[]; cell?: string };                    // board row = the bout containing all these fighter ids; cell = column key
+  text: string;               // the sentence also in review.flags — byte-identical to the plain flag
+  covers?: string[];          // other flag sentences this card answers (main covers the co-main line)
+  data?: Record<string, any>; // kind payload for applyDecision — always "set to", never "toggle"
+}
+export interface Decision { kind: ConfirmKind; value: any; at: string; text: string /* human line: "Left = BLUE · right = RED" */; was?: any /* the suggested option id at answer time, for forget */ }
 
 export interface Pack {
   id: string;                                  // "boxing.fightnight"

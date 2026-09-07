@@ -8,6 +8,7 @@ import type { Probe } from "./intake.js";
 import { tokenise, screenFromEvidence, type FileEvidence, type ScreenSynonyms, type GraphicKind } from "./tokens.js";
 import { resolveScheme, sheetBout, sheetSide, fightersNamed, type Scheme } from "./scheme.js";
 import { applyOcr, type OcrResult } from "./ocr.js";
+import { fighterSide } from "../review.js";
 
 export interface Assignment { slot: string; file: string; confidence: number; reasons: string[]; issues: string[]; update?: boolean }
 export interface IntakeResult {
@@ -17,6 +18,7 @@ export interface IntakeResult {
   ignored: { file: string; why: string }[];
   unfilled: string[];                            // manifest slots with no file
   issues: string[];                              // delivery-level problems (folder/file disagreements, count mismatches)
+  files: FileEvidence[];                         // every file's evidence (the confirm cards read sizes and words from here)
 }
 
 type Slot = ReturnType<typeof mediaManifest>[number];
@@ -34,7 +36,12 @@ function slotParts(slot: Slot) {
   return null;
 }
 
-export interface IntakeOptions { override?: Partial<Pick<Scheme, "direction" | "aIs">>; ocr?: Record<string, OcrResult> }
+export interface IntakeOptions {
+  override?: Partial<Pick<Scheme, "direction" | "aIs">>;
+  ocr?: Record<string, OcrResult>;
+  /** operator placements by delivery-relative path ("/" separators) — beat every inference */
+  assign?: Record<string, { fighter?: string; variant?: string; slot?: string; ok?: boolean; skip?: boolean }>;
+}
 
 export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: ScreenSynonyms, opts: IntakeOptions = {}): IntakeResult {
   const byPath = new Map(probes.map((p) => [p.file, p]));
@@ -44,12 +51,14 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
   if (opts.override?.aIs) { scheme.aIs = opts.override.aIs; scheme.evidence.push(`a = ${scheme.aIs} set by operator`); }
   const N = doc.data.bouts.length; const bouts = [...doc.data.bouts].sort((a: any, b: any) => a.order - b.order);
   const parsed = manifest.map((s) => ({ s, p: slotParts(s) })).filter((x) => x.p);
-  const result: IntakeResult = { scheme, assignments: [], unmatched: [], ignored: [], unfilled: [], issues: [] };
+  const result: IntakeResult = { scheme, assignments: [], unmatched: [], ignored: [], unfilled: [], issues: [], files };
   if (scheme.boutCountMatches === false) result.issues.push(scheme.evidence.find((e) => /but sheet has/.test(e))!);
   const best = new Map<string, Assignment>();
 
   for (const ev of files) {
     if (ev.ignored) { result.ignored.push({ file: ev.file, why: ev.ignored }); continue; }
+    const dec = opts.assign?.[ev.file];
+    if (dec?.skip) { result.ignored.push({ file: ev.file, why: "left out by you" }); continue; }
     const reasons: string[] = []; const issues: string[] = [...ev.conflicts];
     const graphic = KIND_TO_GRAPHIC[ev.kind];
     const scr = screenFromEvidence(ev, syn);
@@ -67,6 +76,8 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
       if (boutOrder === null) issues.push("numbering direction unresolved"); else reasons.push(`bout ${ev.bout} → sheet bout ${boutOrder} (${scheme.direction})`);
       if ((ev.side === "a" || ev.side === "b") && !side) issues.push("a/b side unresolved");
     }
+    // the operator said whose file this is — keyed by fighter, so it follows them through a corner swap
+    if (dec?.fighter) { const hit = fighterSide(doc, dec.fighter); if (hit) { boutOrder = hit.order; side = hit.side; strength = 1; reasons.push(`${hit.side} corner set by you`); } }
     const bout = boutOrder ? bouts.find((b: any) => b.order === boutOrder) : null;
     // candidate slots
     const cands = parsed.filter(({ p }) => {
@@ -83,13 +94,15 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
       if (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") return side ? p!.variant === side.toUpperCase() : false;
       return false;
     });
+    // a placement made by hand (drag to a slot) beats everything
+    if (dec?.slot) { const one = parsed.find((x) => x.s.slot === dec.slot); cands.length = 0; if (one) cands.push(one); reasons.push("placed by you"); }
     // a VT tied to a bout (fight open) beats the event-wide VT slots when both are candidates
     if (graphic === "VT" && bout && cands.some((c) => c.p!.group === bout.id)) { const c2 = cands.filter((c) => c.p!.group === bout.id); cands.length = 0; cands.push(...c2); reasons.push(`fight open for ${bout.id}`); }
     if (graphic === "HOLD" && cands.length > 1) {
       const txt = (ev.dir.join(" ") + " " + ev.base).toLowerCase().replace(/main\s?(video)?\s?(boo?ards?|screens?|led)/g, " ");
-      const pick = /sponsor|logo/.test(txt) ? "SPONSOR" : /co[\s_-]?main/.test(txt) ? "COMAIN" : /main/.test(txt) ? "MAIN" : null;
+      const pick = dec?.variant ?? (/sponsor|logo/.test(txt) ? "SPONSOR" : /co[\s_-]?main/.test(txt) ? "COMAIN" : /main/.test(txt) ? "MAIN" : null);
       const c2 = pick ? cands.filter((c) => c.p!.variant === pick) : [];
-      if (c2.length) { cands.length = 0; cands.push(...c2); reasons.push(`hold variant ${pick}`); }
+      if (c2.length) { cands.length = 0; cands.push(...c2); reasons.push(`hold variant ${pick}${dec?.variant ? " set by you" : ""}`); }
       else if (new Set(cands.map((c) => c.p!.variant)).size > 1) { result.unmatched.push({ file: ev.file, evidence: ev, why: "hold variant unclear — main, co-main or sponsor? confirm", candidates: scr.candidates }); continue; }
     }
     if (!cands.length) { result.unmatched.push({ file: ev.file, evidence: ev, why: !graphic ? "graphic type not recognised" : !scr.surface && scr.candidates.length !== 1 ? `screen ambiguous (${scr.candidates.join(", ") || "none"}) at ${ev.probe?.w}x${ev.probe?.h}` : !bout && graphic !== "HOLD" && graphic !== "VT" && graphic !== "FLAG" ? "bout could not be determined" : bout && !side && (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") ? "corner unclear (names both fighters or a/b unresolved) — confirm which side" : "no slot for this combination", candidates: scr.candidates }); continue; }
@@ -97,6 +110,7 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
     if (ev.probe && cands[0].s.w === ev.probe.w && cands[0].s.h === ev.probe.h) conf += 0.1; else if (ev.probe) { conf -= 0.1; issues.push(`file is ${ev.probe.w}x${ev.probe.h}, slot wants ${cands[0].s.w}x${cands[0].s.h} — will scale`); }
     if (issues.some((i) => /sheet wins|folder/.test(i))) conf -= 0.15;
     conf = Math.max(0, Math.min(1, conf));
+    if (dec && !dec.skip) conf = Math.max(conf, 0.95);
     const shared = graphic === "ROUND" && !bout; if (shared) reasons.push(`shared round card → ${cands.length} bouts`);
     // one file fills one slot per screen it fits (a 1920x1080 walkout fills IMAG L and R), except event-wide round cards which fill every bout's slot
     const firstPerScreen = [...new Map(cands.map((c) => [c.p!.screen, c])).values()];

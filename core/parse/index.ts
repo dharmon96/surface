@@ -2,6 +2,7 @@ import type { ShowDoc } from "../types.js";
 import { parseTimingSheet } from "./timing-sheet.js";
 import { parseBoutSheet } from "./bout-sheet.js";
 import { parseRundown, rundownToCustomCues } from "./rundown.js";
+import { applyDecisions, rekeyDecisions, rekeyItem } from "../review.js";
 
 export { parseTimingSheet, parseBoutSheet, parseRundown, rundownToCustomCues };
 export type SheetKind = "timing_sheet" | "bout_sheet" | "rundown" | "unknown";
@@ -30,17 +31,24 @@ export function mergeSheets(base: ShowDoc, incoming: ShowDoc): { doc: ShowDoc; d
   const diff: string[] = [];
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
   const byName = new Map(Object.entries(base.data.fighters).map(([id, f]: any) => [norm(f.name), id]));
-  const idMap: Record<string, string> = {};
+  // pass 1: incoming id → base id (new fighters take the next free ids, in sheet order)
+  const idMap: Record<string, string> = {}; let nextId = Object.keys(base.data.fighters).length;
+  for (const [iid, f] of Object.entries<any>(incoming.data.fighters)) { const bid = byName.get(norm(f.name)); idMap[iid] = bid ?? `F${String(++nextId).padStart(2, "0")}`; }
+  // the operator's answers, replayed onto the new parse wherever it raises the same question — a sheet that states the
+  // fact raises no question, so the sheet wins. Work on a copy: the caller's parse stays untouched.
+  const inv = Object.fromEntries(Object.entries(idMap).map(([i, b]) => [b, i]));
+  const inc: ShowDoc = { ...incoming, event: { ...incoming.event }, data: { ...incoming.data, fighters: Object.fromEntries(Object.entries<any>(incoming.data.fighters).map(([k, v]) => [k, { ...v }])), bouts: incoming.data.bouts.map((b: any) => ({ ...b })) }, review: { ...incoming.review, items: [...(incoming.review.items ?? [])] }, decisions: rekeyDecisions(base.decisions ?? {}, inv) };
+  applyDecisions(inc);
   const fighters = { ...base.data.fighters };
-  for (const [iid, f] of Object.entries<any>(incoming.data.fighters)) {
+  for (const [iid, f] of Object.entries<any>(inc.data.fighters)) {
     const bid = byName.get(norm(f.name));
-    if (bid) { idMap[iid] = bid; const b = fighters[bid]; for (const k of ["nick", "weightLbs", "height", "hometown", "record"] as const) { const nv = (f as any)[k]; if (nv != null && nv !== "" && JSON.stringify(nv) !== JSON.stringify(b[k])) { if (b[k] != null && b[k] !== "") diff.push(`${b.name}: ${k} ${JSON.stringify(b[k])} → ${JSON.stringify(nv)}`); b[k] = nv; } } if (f.country !== "??" && f.country !== b.country) { diff.push(`${b.name}: country ${b.country} → ${f.country}`); b.country = f.country; } }
-    else { const nid = `F${String(Object.keys(fighters).length + 1).padStart(2, "0")}`; fighters[nid] = f; idMap[iid] = nid; diff.push(`NEW fighter ${f.name}`); }
+    if (bid) { const b = fighters[bid]; for (const k of ["nick", "weightLbs", "height", "hometown", "record"] as const) { const nv = (f as any)[k]; if (nv != null && nv !== "" && JSON.stringify(nv) !== JSON.stringify(b[k])) { if (b[k] != null && b[k] !== "") diff.push(`${b.name}: ${k} ${JSON.stringify(b[k])} → ${JSON.stringify(nv)}`); b[k] = nv; } } if (f.country !== "??" && f.country !== b.country) { diff.push(`${b.name}: country ${b.country} → ${f.country}`); b.country = f.country; } }
+    else { fighters[idMap[iid]] = f; diff.push(`NEW fighter ${f.name}`); }
   }
   const bouts = base.data.bouts.map((b: any) => ({ ...b }));
   const key = (b: any, m: Record<string, string> = {}) => `${m[b.red] ?? b.red}|${m[b.blue] ?? b.blue}`;
   const seen = new Set<string>();
-  for (const ib of incoming.data.bouts) {
+  for (const ib of inc.data.bouts) {
     const k = key(ib, idMap); seen.add(k);
     const bb = bouts.find((b: any) => key(b) === k || key(b) === k.split("|").reverse().join("|"));
     if (!bb) { bouts.push({ ...ib, red: idMap[ib.red], blue: idMap[ib.blue] }); diff.push(`NEW bout ${fighters[idMap[ib.red]].name} v ${fighters[idMap[ib.blue]].name}`); continue; }
@@ -54,6 +62,6 @@ export function mergeSheets(base: ShowDoc, incoming: ShowDoc): { doc: ShowDoc; d
   for (const b of bouts) if (!seen.has(key(b)) && !seen.has(key(b).split("|").reverse().join("|"))) { diff.push(`REMOVED bout ${fighters[b.red].name} v ${fighters[b.blue].name} (not on the new sheet)`); b.removed = true; }
   const kept = bouts.filter((b: any) => !b.removed).sort((a: any, b: any) => a.order - b.order);
   kept.forEach((b: any, i: number) => { b.order = i + 1; b.id = `B${String(i + 1).padStart(2, "0")}`; });
-  const event = { ...base.event, ...Object.fromEntries(Object.entries(incoming.event).filter(([, v]) => v != null && v !== "")) };
-  return { doc: { ...base, event, data: { ...base.data, fighters, bouts: kept }, source: incoming.source, review: { status: "draft", flags: [...incoming.review.flags, ...diff.map((d) => `CHANGED: ${d}`)] } }, diff };
+  const event = { ...base.event, ...Object.fromEntries(Object.entries(inc.event).filter(([, v]) => v != null && v !== "")) };
+  return { doc: { ...base, event, data: { ...base.data, fighters, bouts: kept }, source: inc.source, review: { status: "draft", flags: [...inc.review.flags, ...diff.map((d) => `CHANGED: ${d}`)], items: (inc.review.items ?? []).map((i) => rekeyItem(i, idMap)) }, decisions: base.decisions ?? {}, delivery: base.delivery }, diff };
 }

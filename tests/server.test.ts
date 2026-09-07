@@ -64,3 +64,41 @@ describe("clip clock", () => {
     expect(ck2.share.lan).toBe(false); // loopback by default — LAN sharing is the --bind opt-in
   });
 });
+
+describe("Confirm deck", () => {
+  it("lists the open questions, and the board and show agree on the count", async () => {
+    const v = await (await fetch(`${base}/api/confirm`)).json();
+    expect(v.count).toBe(v.items.length);
+    expect(v.items.length).toBeGreaterThan(0);
+    // the merged Glendale timing sheet asks about the weight class it read from a weight
+    expect(v.items.some((i: any) => i.kind === "weight-class")).toBe(true);
+    const show = await (await fetch(`${base}/api/show`)).json();
+    expect(show.confirm).toBe(v.count);
+    const board = await (await fetch(`${base}/api/board`)).json();
+    const asked = board.rows.flatMap((r: any) => r.asks.map((a: any) => a.key));
+    expect(asked.every((k: string) => v.items.some((i: any) => i.key === k))).toBe(true);
+    expect(v.items.every((i: any) => typeof i.thumbs === "object")).toBe(true);
+  });
+  it("an answer moves the card out of the deck and changes the doc", async () => {
+    const v = await (await fetch(`${base}/api/confirm`)).json();
+    const main = v.items.find((i: any) => i.kind === "main");
+    const other = main.options.find((o: any) => !o.suggested);
+    const before = v.count;
+    const r = await (await fetch(`${base}/api/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: main.key, option: other.id }) })).json();
+    expect(r.ok).toBe(true); expect(r.count).toBe(before - 1);
+    const doc = await (await fetch(`${base}/api/doc`)).json();
+    expect(doc.decisions[main.key].value).toBe(other.id);
+    const pk = (b: any) => [b.red, b.blue].sort().join("|");
+    expect(doc.data.bouts.find((b: any) => b.isMain && pk(b) === other.id)).toBeTruthy();
+    expect((await (await fetch(`${base}/api/confirm`)).json()).items.some((i: any) => i.key === main.key)).toBe(false);
+  });
+  it("refuses an unknown question and an unknown option, and forgetting one puts it back", async () => {
+    expect((await fetch(`${base}/api/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "nope" }) })).status).toBe(404);
+    const v = await (await fetch(`${base}/api/confirm`)).json();
+    const first = v.items[0];
+    expect((await fetch(`${base}/api/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: first.key, option: "not-an-option" }) })).status).toBe(400);
+    const back = await (await fetch(`${base}/api/confirm/forget`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: "main" }) })).json();
+    expect(back.items.some((i: any) => i.kind === "main")).toBe(true);   // the question is open again
+    expect(back.answered.some((a: any) => a.key === "main")).toBe(false);
+  });
+});
