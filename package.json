@@ -1,0 +1,21 @@
+{
+  "name": "boutkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Show-control console for live-event graphics: bout sheet in, Resolume / disguise / Companion out.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cli": "tsx cli/boutkit.ts"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

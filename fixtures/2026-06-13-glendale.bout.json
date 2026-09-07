@@ -1,0 +1,85 @@
+{
+  "schema": "boutkit/1.0",
+  "source": { "file": "June 13 Bam Timing Sheet. FINAL WEIGHTS AND READY BY.pdf", "kind": "timing_sheet", "version": "FINAL WEIGHTS AND READY BY", "parsedAt": "2026-09-07" },
+  "event": {
+    "id": "2026-06-13-glendale-ddarena",
+    "name": "Bam Rodriguez vs Antonio Vargas",
+    "date": "2026-06-13", "timezone": "America/Phoenix",
+    "venue": "Desert Diamond Arena", "city": "Glendale, Arizona",
+    "doors": "14:00", "broadcast": { "network": "DAZN", "feedStart": "17:00", "firstBroadcastBout": "B05" },
+    "walkOrder": ["red", "blue"], "introOrder": ["red", "blue"]
+  },
+  "screens": [
+    { "id": "MAIN",   "name": "Main LED",        "w": 3840, "h": 1080 },
+    { "id": "RIBBON", "name": "Ringside ribbon", "w": 7680, "h": 216 },
+    { "id": "IMAG_L", "name": "IMAG left",       "w": 1920, "h": 1080 },
+    { "id": "IMAG_R", "name": "IMAG right",      "w": 1920, "h": 1080 }
+  ],
+  "fighters": {
+    "F01": { "name": "Filip Stankovic",   "nick": null,        "country": "RS", "hometown": "Nis, Serbia",                          "record": {"w":9,"l":3,"d":0,"ko":6},   "weightLbs": 168.6, "height": "6'2\"" },
+    "F02": { "name": "Ronny Alvarez",     "nick": null,        "country": "CU", "hometown": "Ciego de Avila, Cuba",                 "record": {"w":6,"l":0,"d":0,"ko":5},   "weightLbs": 167.6, "height": "6'3\"" },
+    "F03": { "name": "Shaquile Felicia",  "nick": null,        "country": "US", "hometown": "Phoenix, Arizona",                     "record": {"w":3,"l":1,"d":0,"ko":1},   "weightLbs": 153.7, "height": "5'10\"" },
+    "F04": { "name": "Hector Beltran Jr.","nick": "Handsome",  "country": "US", "hometown": "Dallas, Texas",                        "record": {"w":7,"l":0,"d":0,"ko":5},   "weightLbs": 154.7, "height": "6'0\"" },
+    "F05": { "name": "Rayshawn Taylor",   "nick": null,        "country": "US", "hometown": "Denver, Colorado",                     "record": {"w":1,"l":1,"d":1,"ko":1},   "weightLbs": 126.7, "height": "5'7\"" },
+    "F06": { "name": "Xechal Esquivel",   "nick": null,        "country": "US", "hometown": "Phoenix, Arizona",                     "record": {"w":5,"l":0,"d":0,"ko":4},   "weightLbs": 126.5, "height": "5'7\"" },
+    "F07": { "name": "Cristian Perez",    "nick": "Nonito",    "country": "MX", "hometown": "Monterrey, Nuevo Leon, Mexico",        "record": {"w":12,"l":4,"d":1,"ko":7},  "weightLbs": 143.5, "height": "5'5\"" },
+    "F08": { "name": "Trini Ochoa",       "nick": null,        "country": "US", "hometown": "Phoenix, Arizona",                     "record": {"w":21,"l":1,"d":0,"ko":9},  "weightLbs": 142.6, "height": "5'8\"" },
+    "F09": { "name": "Elias Terraza",     "nick": null,        "country": "US", "hometown": "Phoenix, Arizona",                     "record": {"w":13,"l":0,"d":0,"ko":9},  "weightLbs": 132.5, "height": "5'10\"" },
+    "F10": { "name": "Adrian Rodriguez",  "nick": "Suavecito", "country": "US", "hometown": "Glendale, Arizona",                    "record": {"w":10,"l":0,"d":0,"ko":6},  "weightLbs": 132.9, "height": "5'6\"" },
+    "F11": { "name": "Gabriela Tellez",   "nick": null,        "country": "US", "hometown": "San Antonio, Texas",                   "record": {"w":7,"l":0,"d":0,"ko":3},   "weightLbs": 132.8, "height": "5'2\"" },
+    "F12": { "name": "Elif Turhan",       "nick": null,        "country": "TR", "hometown": "Istanbul, Turkey",                     "record": {"w":13,"l":0,"d":0,"ko":9},  "weightLbs": 134.8, "height": "5'5\"", "flags": ["hometown spelled 'Instabul' on sheet"] },
+    "F13": { "name": "Jordan Martinez",   "nick": "El Moreno", "country": "US", "hometown": "Phoenix, Arizona",                     "record": {"w":16,"l":0,"d":1,"ko":15}, "weightLbs": 122.0, "height": "5'3\"" },
+    "F14": { "name": "Arturo Cardenas",   "nick": null,        "country": "MX", "hometown": "Sahuayo de Morelos, Michoacan, Mexico","record": {"w":17,"l":0,"d":2,"ko":9},  "weightLbs": 122.0, "height": "5'6\"" },
+    "F15": { "name": "Antonio Vargas",    "nick": null,        "country": "US", "hometown": "Kissimmee, Florida",                   "record": {"w":19,"l":1,"d":1,"ko":11}, "weightLbs": 117.6, "height": "5'5.5\"" },
+    "F16": { "name": "Jesse Rodriguez",   "nick": "Bam",       "country": "US", "hometown": "San Antonio, Texas",                   "record": {"w":23,"l":0,"d":0,"ko":16}, "weightLbs": 117.6, "height": "5'4\"" }
+  },
+  "bouts": [
+    { "id":"B01","order":1,"red":"F01","blue":"F02","rounds":8, "title":null,"weightClass":"Super Middleweight","female":false,"isMain":false,"broadcast":false,
+      "timing":{"readyBy":"14:15","walk":"14:15","firstBell":"14:20","finalBell":"14:51","walkOut":"14:56"} },
+    { "id":"B02","order":2,"red":"F03","blue":"F04","rounds":6, "title":null,"weightClass":"Super Welterweight","female":false,"isMain":false,"broadcast":false,
+      "timing":{"readyBy":"15:00","walk":"15:01","firstBell":"15:06","finalBell":"15:29","walkOut":"15:34"} },
+    { "id":"B03","order":3,"red":"F05","blue":"F06","rounds":6, "title":null,"weightClass":"Featherweight","female":false,"isMain":false,"broadcast":false,
+      "timing":{"readyBy":"15:30","walk":"15:39","firstBell":"15:44","finalBell":"16:07","walkOut":"16:12"} },
+    { "id":"B04","order":4,"red":"F07","blue":"F08","rounds":8, "title":null,"weightClass":"Super Lightweight","female":false,"isMain":false,"broadcast":false,
+      "timing":{"readyBy":"16:15","walk":"16:17","firstBell":"16:22","finalBell":"16:53","walkOut":"16:58"} },
+    { "id":"B05","order":5,"red":"F09","blue":"F10","rounds":10,"title":null,"weightClass":"Lightweight","female":false,"isMain":false,"broadcast":true,
+      "timing":{"readyBy":"17:00","walk":"17:05","firstBell":"17:10","finalBell":"17:49","walkOut":"17:54"} },
+    { "id":"B06","order":6,"red":"F11","blue":"F12","rounds":10,"title":"IBF Female World Lightweight Title","weightClass":"Lightweight","female":true,"isMain":false,"broadcast":true,
+      "anthems":["US","TR"],
+      "timing":{"readyBy":"17:45","walk":"17:59","firstBell":"18:04","finalBell":"18:33","walkOut":"18:38"} },
+    { "id":"B07","order":7,"red":"F13","blue":"F14","rounds":10,"title":"WBC Continental Americas Super Bantamweight Title","weightClass":"Super Bantamweight","female":false,"isMain":false,"broadcast":true,
+      "timing":{"readyBy":"18:30","walk":"18:43","firstBell":"18:48","finalBell":"19:27","walkOut":"19:32"} },
+    { "id":"B08","order":8,"red":"F15","blue":"F16","rounds":12,"title":"WBA Bantamweight World Title","weightClass":"Bantamweight","female":false,"isMain":true,"broadcast":true,
+      "anthems":["US"],
+      "timing":{"readyBy":"19:30","walk":"19:37","firstBell":"19:42","finalBell":"20:29","walkOut":"20:34"} }
+  ],
+  "graphics": {
+    "HOLD":    { "kind":"holding", "perScreen":true, "count":3 },
+    "FLAG":    { "kind":"anthem",  "perCountry":true },
+    "WALKOUT": { "kind":"walkout", "perFighter":true },
+    "FIGHTER": { "kind":"fighter", "perFighter":true },
+    "TALE":    { "kind":"matchup", "perBout":true },
+    "ROUND":   { "kind":"round",   "perBout":true, "count":"rounds" },
+    "WINNER":  { "kind":"winner",  "perBout":true, "variants":["RED","BLUE","DRAW"] },
+    "UP_NEXT": { "kind":"matchup", "perBout":true }
+  },
+  "routing": {
+    "HOLD":    ["MAIN","RIBBON","IMAG_L","IMAG_R"],
+    "FLAG":    ["MAIN"],
+    "WALKOUT": ["MAIN","IMAG_L","IMAG_R"],
+    "FIGHTER": ["MAIN","RIBBON"],
+    "TALE":    ["MAIN","IMAG_L","IMAG_R"],
+    "ROUND":   ["MAIN","RIBBON"],
+    "WINNER":  ["MAIN","RIBBON","IMAG_L","IMAG_R"],
+    "UP_NEXT": ["MAIN","IMAG_L","IMAG_R"]
+  },
+  "review": {
+    "status": "draft",
+    "flags": [
+      "Weight classes inferred from weights; sheet does not state them for non-title bouts",
+      "Anthems: sheet does not list them; B06 (US v TR) and B08 (main) assumed. Confirm with promoter",
+      "Screens are placeholders until the venue screen list (PixelMapper) is supplied",
+      "F12 hometown typo on sheet corrected (Instabul -> Istanbul)"
+    ]
+  }
+}
