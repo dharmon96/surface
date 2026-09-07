@@ -38,8 +38,8 @@ function Tile({ s, doc, on, avail, onClick, scale = 1 / 48 }: { s: Screen; doc: 
   const state = !avail ? "" : avail.total === 0 ? "" : avail.have === avail.total ? "full" : avail.have ? "part" : "none";
   return (
     <div className={`tile ${on ? "on" : ""} ${onClick ? "click" : ""} ${state}`} style={{ width: Math.max(w, 64) + 4 }} onClick={onClick} title={`${s.name} · ${s.w}×${s.h}${avail && avail.total ? ` · ${avail.have}/${avail.total} delivered` : ""}`}>
-      <div className="raster" style={{ width: w, height: h, backgroundImage: t ? `url(${t})` : undefined }}>{!t && <span>{s.id}</span>}</div>
-      <div className="cap"><span>{s.id}</span>{avail && avail.total > 0 && <b>{avail.have}/{avail.total}</b>}</div>
+      <div className="raster" style={{ width: w, height: h, backgroundImage: t ? `url(${t})` : undefined }}>{!t && <span>{s.name}</span>}</div>
+      <div className="cap"><span>{s.name}</span>{avail && avail.total > 0 && <b>{avail.have}/{avail.total}</b>}</div>
     </div>
   );
 }
@@ -54,6 +54,9 @@ export function Screens() {
   const set = (patch: Partial<ShowDoc> & { screenWords?: Record<string, string[]> }) => setDraft({ ...(draft ?? doc!), ...patch } as ShowDoc);
   const surfaceOf = (sid: string) => d.surfaces.find((s) => s.screens.includes(sid));
   const setScreen = (i: number, s: Screen) => set({ screens: d.screens.map((x, k) => (k === i ? s : x)) });
+  /** the name is free text (spaces, capitals — whatever the venue calls it); the id underneath never changes. A screen that is
+   *  its own group carries the new name to the group too, so the routing tiles read the same. */
+  const renameScreen = (i: number, name: string) => { const s = d.screens[i]; const sf = surfaceOf(s.id); set({ screens: d.screens.map((x, k) => (k === i ? { ...x, name } : x)), surfaces: sf && sf.screens.length === 1 ? d.surfaces.map((x) => (x.id === sf.id ? { ...x, name } : x)) : d.surfaces }); };
   const addScreen = () => { const id = newId("Screen " + (d.screens.length + 1), new Set(d.screens.map((s) => s.id))); set({ screens: [...d.screens, { id, name: `Screen ${d.screens.length + 1}`, w: 1920, h: 1080 }], surfaces: [...d.surfaces, { id, name: `Screen ${d.screens.length + 1}`, screens: [id] }] }); };
   const removeScreen = (id: string) => { const surfaces = d.surfaces.map((s) => ({ ...s, screens: s.screens.filter((x) => x !== id) })).filter((s) => s.screens.length); const routing = Object.fromEntries(Object.entries(d.routing).map(([k, v]) => [k, v.filter((x) => x === "ALL" || surfaces.some((s) => s.id === x))])); set({ screens: d.screens.filter((s) => s.id !== id), surfaces, routing }); };
   const regroup = (sid: string, target: string) => {
@@ -98,18 +101,15 @@ export function Screens() {
       <div className="panel" style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}><h3 style={{ margin: 0 }}>Screens</h3><span className="dim mono-small">{d.screens.length} screens · {d.surfaces.length} groups</span><span style={{ marginLeft: "auto" }} /><button onClick={addScreen}>Add screen</button></div>
         {hasMedia && <div className="dim mono-small" style={{ margin: "6px 0" }}>Media is already mapped to these ids — change labels and sizes freely, but adding or removing screens means running Prepare again.</div>}
-        <table style={{ marginTop: 8 }}><thead><tr><th></th><th>Id</th><th>Label</th><th>Width</th><th>Height</th><th>Shape</th><th>Group with</th><th title="Never receives an ALL cue (host booth, LED tables, scale)">Independent</th><th title="Words the promoter uses for this screen in file names">Also called</th><th></th></tr></thead>
+        <table className="screens-edit" style={{ marginTop: 8 }}><thead><tr><th></th><th>Name</th><th>Pixels</th><th>Group with</th><th title="Never receives an ALL cue (host booth, LED tables, scale)">Indep.</th><th title="Words the promoter uses for this screen in file names">Also called</th><th></th></tr></thead>
           <tbody>{d.screens.map((s, i) => { const sf = surfaceOf(s.id); const groupTarget = sf && sf.screens.length > 1 ? sf.id : ""; return (
             <tr key={s.id}>
-              <td><Tile s={s} doc={d} scale={scale * 0.5} /></td>
-              <td className="mono-small">{s.id}</td>
-              <td><input value={s.name} onChange={(e) => setScreen(i, { ...s, name: e.target.value })} style={{ width: 140 }} /></td>
-              <td><input type="number" value={s.w} onChange={(e) => setScreen(i, { ...s, w: Number(e.target.value) })} style={{ width: 80 }} /></td>
-              <td><input type="number" value={s.h} onChange={(e) => setScreen(i, { ...s, h: Number(e.target.value) })} style={{ width: 80 }} /></td>
-              <td className="dim mono-small">{shape(s)}</td>
-              <td><select value={groupTarget} onChange={(e) => regroup(s.id, e.target.value)}><option value="">— its own —</option>{d.surfaces.filter((x) => !x.screens.includes(s.id) || x.screens.length > 1).map((x) => <option key={x.id} value={x.id}>{x.id} ({x.screens.join(" + ")})</option>)}</select></td>
+              <td><Tile s={s} doc={d} scale={scale * 0.4} /></td>
+              <td><input value={s.name} onChange={(e) => renameScreen(i, e.target.value)} style={{ width: 170 }} placeholder="Left wall" /><div className="faint mono-small" title="The id is baked into file names, so it stays put — rename freely">{s.id} · {shape(s)}</div></td>
+              <td><div className="px"><input type="number" value={s.w} onChange={(e) => setScreen(i, { ...s, w: Number(e.target.value) })} /><span className="dim">×</span><input type="number" value={s.h} onChange={(e) => setScreen(i, { ...s, h: Number(e.target.value) })} /></div></td>
+              <td><select value={groupTarget} onChange={(e) => regroup(s.id, e.target.value)} style={{ maxWidth: 170 }}><option value="">— its own —</option>{d.surfaces.filter((x) => !x.screens.includes(s.id) || x.screens.length > 1).map((x) => <option key={x.id} value={x.id}>{x.name} ({x.screens.map((id) => d.screens.find((sc) => sc.id === id)?.name ?? id).join(" + ")})</option>)}</select></td>
               <td><input type="checkbox" checked={!!sf?.independent} onChange={(e) => set({ surfaces: d.surfaces.map((x) => (x.id === sf?.id ? { ...x, independent: e.target.checked } : x)) })} /></td>
-              <td><input value={(words[s.id] ?? []).join(", ")} placeholder="fascia, truss, 28576x64" onChange={(e) => set({ screenWords: { ...words, [s.id]: e.target.value.split(",").map((w) => w.trim().toLowerCase()).filter(Boolean) } } as any)} style={{ width: 170 }} /></td>
+              <td><input value={(words[s.id] ?? []).join(", ")} placeholder="fascia, truss, 28576x64" onChange={(e) => set({ screenWords: { ...words, [s.id]: e.target.value.split(",").map((w) => w.trim().toLowerCase()).filter(Boolean) } } as any)} style={{ width: 150 }} /></td>
               <td><button onClick={() => removeScreen(s.id)} title="Remove">×</button></td>
             </tr>); })}</tbody></table>
       </div>
@@ -119,7 +119,7 @@ export function Screens() {
           <div key={g.key} className="route">
             <div className="rlabel"><b>{g.label}</b><span className="dim">{g.hint}</span><label className="dim mono-small"><input type="checkbox" checked={all} onChange={() => toggleAll(g.key)} /> every screen</label></div>
             <div className="tiles">{d.surfaces.map((sf) => { const scs = surfaceScreens(sf); if (!scs.length) return null; const on = routed(g.key, sf.id); const av = avail[g.key]; const sum = scs.reduce((o, sc) => { const a = av[sc.id]; if (a) { o.have += a.have; o.total += a.total; } return o; }, { have: 0, total: 0 });
-              return <div key={sf.id} className={`sgroup ${scs.length > 1 ? "multi" : ""} ${sf.independent ? "indep" : ""}`} title={sf.independent ? "independent — skipped by 'every screen'" : sf.id}>{scs.map((sc, k) => <Tile key={sc.id} s={sc} doc={d} on={on} avail={k === 0 ? sum : undefined} onClick={() => toggleRoute(g.key, sf.id)} scale={scale} />)}</div>; })}</div>
+              return <div key={sf.id} className={`sgroup ${scs.length > 1 ? "multi" : ""} ${sf.independent ? "indep" : ""}`} title={sf.independent ? `${sf.name} — independent, skipped by 'every screen'` : sf.name}>{scs.map((sc, k) => <Tile key={sc.id} s={sc} doc={d} on={on} avail={k === 0 ? sum : undefined} onClick={() => toggleRoute(g.key, sf.id)} scale={scale} />)}</div>; })}</div>
           </div>); })}</div>
         <div className="faint mono-small" style={{ marginTop: 6 }}>Dashed = independent (host booth, tables, scale) — never hit by "every screen". A file that matches a screen's size, or its exact shape at a higher resolution, counts as delivered for it.</div>
       </div>

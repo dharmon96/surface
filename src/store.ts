@@ -74,7 +74,12 @@ export const useStore = create<S>((set, get) => ({
     s.on("state", (e: any) => set({ state: e.state }));
     s.on("show", () => { get().load(); get().loadHub(); get().loadBoard(); });
     s.on("board", () => { get().loadBoard(); });
-    s.on("prepare", (e: any) => set({ prepare: e }));
+    s.on("prepare", (e: any) => set({ prepare: e.phase === "probing" ? { ...e, phase: "reading files" } : e }));
+    // live intake progress: probing (parallel ffprobe) and the OCR pass, as "reading files 120/300"
+    s.on("intake", (e: any) => set((st) => {
+      if (e.phase === "done") return /reading/.test(st.prepare?.phase ?? "") ? { prepare: null } : {};
+      return { prepare: { phase: e.phase === "ocr" ? "reading text on unplaced files" : "reading files", detail: e.total ? `${e.done}/${e.total}` : undefined, dir: st.prepare?.dir } };
+    }));
     s.on("build", (e: any) => set({ build: e }));
     s.on("fired", (e: any) => set((st) => ({ log: [`${new Date().toLocaleTimeString()}  GO ${String(e.cue.n).padStart(3, "0")} ${e.cue.id}  ${e.cue.name}`, ...st.log].slice(0, 200) })));
     s.on("revert", (e: any) => set((st) => ({ log: [`${new Date().toLocaleTimeString()}  ↩ ${e.surface}/${e.layer} back to base`, ...st.log].slice(0, 200) })));

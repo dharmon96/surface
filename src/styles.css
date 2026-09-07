@@ -247,3 +247,27 @@ h2, h3, h4 { text-wrap: balance; }
 .olayout { font-size: 12px; } .olayout input[type="number"] { width: 70px; text-align: right; } .olayout th { text-align: left; font-weight: 500; color: var(--muted-fg); }
 .outputs .row { display: flex; align-items: center; } .outputs .row.wrap { flex-wrap: wrap; }
 .outputs .seg { display: inline-flex; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--muted); } .outputs .seg button { background: transparent; border: 0; border-radius: 999px; color: var(--muted-fg); font-size: 12px; font-weight: 600; padding: 4px 10px; } .outputs .seg button.on { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+
+/* ── Card details: one row per bout, a corner per cell (names + country), the rest secondary */
+.card-edit td { vertical-align: middle; }
+.card-edit .ord { font-weight: 700; font-size: 16px; }
+.card-edit .badge { border: 0; background: none; padding: 0; cursor: pointer; margin-top: 2px; }
+.card-edit .tag.faint { color: var(--faint); border-color: var(--border); opacity: .7; }
+.card-edit .badge:hover .tag.faint { opacity: 1; color: var(--muted-fg); }
+.card-edit .corner { min-width: 240px; border-left: 3px solid var(--line2); padding-left: 8px; }
+.card-edit .corner.red { border-left-color: var(--red); } .card-edit .corner.blue { border-left-color: var(--blue); }
+.card-edit .corner .line { display: flex; gap: 6px; }
+.card-edit .corner .line input:first-child { flex: 1; min-width: 150px; }
+.card-edit .corner .cc { width: 44px; text-align: center; text-transform: uppercase; }
+.card-edit .corner .mono-small:empty { display: none; }
+
+/* before a delivery is read, cells are quiet placeholders — not a wall of red */
+.board .cell.quiet { border: 1px dashed var(--border); background: transparent; box-shadow: none; }
+.board .cell.quiet .thumb { background: var(--muted); color: var(--muted-fg); text-shadow: none; font-weight: 500; align-items: center; justify-content: center; }
+.board .cell.quiet .foot { color: var(--faint); border-top-color: var(--border); }
+.board .rounds.quiet i.q { border-color: var(--border); color: var(--faint); background: transparent; }
+.board .cell.none { border: 1px dashed var(--border); background: transparent; box-shadow: none; cursor: default; }
+.board .cell.none .thumb { justify-content: center; align-items: center; height: 58px; }
+.board .cell .scr i.q { border: 1px solid var(--border-strong); background: transparent; }
+.screens-edit td { vertical-align: middle; }
+.screens-edit .px { display: flex; align-items: center; gap: 4px; } .screens-edit .px input { width: 72px; }

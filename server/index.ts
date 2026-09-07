@@ -190,8 +190,19 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
   async function runIntake(dir: string, o: { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string }) {
     const walk = (d: string): string[] => { try { return readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(mov|mp4|mxf|avi|png|jpe?g|tif|webp)$/i.test(f) ? [p] : []; }); } catch { return []; } };
-    const files = walk(dir); const probes = []; const unreadable: { file: string; why: string }[] = [];
-    for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch { unreadable.push({ file: relative(dir, f).replace(/\\/g, "/"), why: "unreadable — ffprobe could not open it" }); } }
+    const files = walk(dir); const probes: Awaited<ReturnType<typeof probe>>[] = []; const unreadable: { file: string; why: string }[] = [];
+    // probe in parallel (each is its own ffprobe process) with live progress — a real delivery is hundreds of files,
+    // and a silent minute of serial probing reads as "hung" from the board
+    let probed = 0, idx = 0;
+    io.emit("intake", { phase: "probing", done: 0, total: files.length });
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      for (let i = idx++; i < files.length; i = idx++) {
+        const f = files[i];
+        try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); }
+        catch { unreadable.push({ file: relative(dir, f).replace(/\\/g, "/"), why: "unreadable — ffprobe could not open it" }); }
+        probed++; if (probed % 10 === 0 || probed === files.length) io.emit("intake", { phase: "probing", done: probed, total: files.length });
+      }
+    }));
     const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
     const man = mediaManifest(doc, cues);
     let r = intake(doc, man, probes, syn, { override: o.override });
@@ -214,6 +225,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (unreadable.length) infFlags.push(`${marker}${unreadable.length} file(s) could not be read at all — see the Media list`);
     const kept = doc.review.flags.filter((f) => !f.startsWith(marker));
     if (infFlags.length || kept.length !== doc.review.flags.length) { doc.review.flags = [...kept, ...infFlags]; persist(); }
+    io.emit("intake", { phase: "done", files: probes.length, matched: r.assignments.length, unmatched: r.unmatched.length });
     io.emit("board", { type: "board", reason: "intake" });
     return lastIntake;
   }

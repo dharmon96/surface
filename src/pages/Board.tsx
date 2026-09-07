@@ -10,22 +10,27 @@ import { Venue } from "./Venue";
 const desktop = () => (window as any).surface;
 const pathOf = (f: File): string | null => desktop()?.getPath?.(f) ?? (f as any).path ?? null;
 /** Boxing reads surnames: "Hector Beltran Jr." → "Beltran Jr.", "Jesse 'Bam' Rodriguez" → "Rodriguez" */
-const surname = (n?: string) => { if (!n) return ""; const t = n.replace(/["'“”‘’].*?["'“”‘’]/g, "").trim().split(/\s+/); const suffix = /^(jr|sr|ii|iii|iv)\.?$/i.test(t[t.length - 1]) ? " " + t.pop() : ""; return (t[t.length - 1] ?? n) + suffix; };
+const surname = (n?: string) => { if (!n) return ""; const t = n.replace(/["'“”‘’].*?["'“”‘’]/g, "").trim().split(/\s+/); const suffix = /^(jr|sr|ii|iii|iv)\.?$/i.test(t[t.length - 1]) ? " " + t.pop() : ""; const last = t[t.length - 1] ?? n; return /^\d+$/.test(last) || last.length < 3 ? n : last + suffix; }; // "Red 1" stays "Red 1", not "1"
 
-function ScreenDots({ slots, screens }: { slots: BoardSlot[]; screens: string[] }) {
-  return <span className="scr">{screens.map((id) => { const s = slots.find((x) => x.screen === id); return <i key={id} className={!s ? "n" : s.status === "ready" ? "" : s.status === "convert" ? "w" : "x"} title={`${id}${s ? ` — ${s.status}${s.note ? `: ${s.note}` : ""}` : " — not on this screen"}`} />; })}</span>;
+type ScreenRef = { id: string; name: string };
+function ScreenDots({ slots, screens, quiet }: { slots: BoardSlot[]; screens: ScreenRef[]; quiet?: boolean }) {
+  return <span className="scr">{screens.map((sc) => { const s = slots.find((x) => x.screen === sc.id); return <i key={sc.id} className={!s ? "n" : s.status === "ready" ? "" : s.status === "convert" ? "w" : quiet ? "q" : "x"} title={`${sc.name}${s ? ` — ${quiet && s.status === "missing" ? "needed" : s.status}${s.note ? `: ${s.note}` : ""}` : " — not on this screen"}`} />; })}</span>;
 }
 
-function Cell({ cell, row, screens, tone, onFire, live }: { cell: BoardCell; row: string; screens: string[]; tone: string; onFire?: (n: number) => void; live?: boolean }) {
-  const { mode, selected, select } = useStore(); const run = mode === "run";
+function Cell({ cell, row, screens, tone, onFire, live }: { cell: BoardCell; row: string; screens: ScreenRef[]; tone: string; onFire?: (n: number) => void; live?: boolean }) {
+  const { mode, selected, select, board } = useStore(); const run = mode === "run";
   const isSel = !run && selected?.row === row && selected.cellKey === cell.key;
   const click = () => { if (run) { if (cell.cues[0]) onFire?.(cell.cues[0].n); } else select(isSel ? null : { row, cellKey: cell.key }); };
   const missing = cell.status === "missing" && !cell.slots.some((s) => s.thumb);
+  // before any delivery has been read, a cell is a quiet placeholder — red "not delivered" only means something once files were looked for
+  const quiet = missing && !board?.delivery;
   const dur = cell.behaviour === "loop" ? "loop" : cell.behaviour === "playHold" ? "play·hold" : cell.behaviour === "timed" ? "timed" : cell.behaviour ?? "";
+  const missText = cell.key === "TEST" ? "no test patterns — load the venue's screens" : "not delivered";
+  if (!cell.cues.length) return <div className="cell none" title="nothing to fire here (e.g. no bout follows the main)"><div className="thumb"><span className="faint">—</span></div></div>;
   return (
-    <div className={`cell ${cell.status}${missing ? " miss" : ""}${live ? " on" : ""}${isSel ? " sel" : ""}`} onClick={click} title={run ? `GO ${cell.cues[0]?.id ?? ""}` : cell.label} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") click(); }}>
-      {cell.thumb && !missing ? <div className="thumb img" style={{ backgroundImage: `url(${cell.thumb})` }} /> : <div className={`thumb ${tone}`}>{missing ? "not delivered" : cell.label}</div>}
-      <div className="foot"><span>{missing ? cell.label : dur}</span><ScreenDots slots={cell.slots} screens={screens} /></div>
+    <div className={`cell ${cell.status}${missing ? " miss" : ""}${quiet ? " quiet" : ""}${live ? " on" : ""}${isSel ? " sel" : ""}`} onClick={click} title={run ? `GO ${cell.cues[0]?.id ?? ""}` : cell.label} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") click(); }}>
+      {cell.thumb && !missing ? <div className="thumb img" style={{ backgroundImage: `url(${cell.thumb})` }} /> : <div className={`thumb ${tone}`}>{missing && !quiet ? missText : cell.label}</div>}
+      <div className="foot"><span>{missing && !quiet ? cell.label : dur}</span><ScreenDots slots={cell.slots} screens={screens} quiet={quiet} /></div>
     </div>
   );
 }
@@ -36,20 +41,21 @@ function Selected() {
   const row = board.rows.find((r) => r.id === selected.row);
   const c = row ? Object.values(row.cells).find((x) => x.key === selected.cellKey) : undefined;
   if (!c) return null;
+  const nameOf = (id: string) => board.screens.find((x) => x.id === id)?.name ?? id;
   return (
     <div className="selpanel">
       <h4>{row?.kind === "bout" ? `Bout ${row.order} · ${row.title}` : "Event"} <button className="x" onClick={() => select(null)} title="Clear (Esc)">×</button></h4>
       <div className="sel-title">{c.label} <span className="dim">{c.cues.map((x) => x.id).join(", ")}</span></div>
-      {c.slots.map((s) => <div key={s.slot} className={`slot ${s.status}`}><span className="k">{s.screen} <span className="dim">{s.w}×{s.h}</span></span><span className="v">{s.status === "missing" ? "missing" : s.file ?? s.out}</span>{s.note && <span className="dim n">{s.note}</span>}</div>)}
+      {c.slots.map((s) => <div key={s.slot} className={`slot ${s.status}`}><span className="k">{nameOf(s.screen)} <span className="dim">{s.w}×{s.h}</span></span><span className="v">{s.status === "missing" ? "missing" : s.file ?? s.out}</span>{s.note && <span className="dim n">{s.note}</span>}</div>)}
       {c.cues.length > 1 && <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>{c.cues.length} cues: {c.cues.map((x) => x.name).join(" · ")}</div>}
     </div>
   );
 }
 
-function Rounds({ row, screens, onFire, liveRound }: { row: BoardRow; screens: string[]; onFire: (n: number) => void; liveRound?: number }) {
-  const { mode } = useStore();
-  return <div className="rounds">{(row.rounds ?? []).map((r) => <i key={r.n} className={`${r.status === "missing" ? "x" : r.status === "convert" ? "w" : "ok"}${liveRound === r.n ? " on" : ""}`} title={`Round ${r.n} — ${r.slots.map((s) => `${s.screen}: ${s.status}`).join(", ")}`} onClick={() => mode === "run" && onFire(r.cue)}>{r.n}</i>)}
-    {row.rounds?.some((r) => r.status !== "ready") && <div className="rnote">{[...new Set(row.rounds.flatMap((r) => r.slots.filter((s) => s.status !== "ready").map((s) => `${s.screen.toLowerCase()}: ${s.status === "missing" ? "none delivered" : "will convert"}`)))].join(" · ")}</div>}
+function Rounds({ row, screens, onFire, liveRound }: { row: BoardRow; screens: ScreenRef[]; onFire: (n: number) => void; liveRound?: number }) {
+  const { mode, board } = useStore(); const nameOf = (id: string) => screens.find((x) => x.id === id)?.name ?? id; const quiet = !board?.delivery;
+  return <div className={`rounds${quiet ? " quiet" : ""}`}>{(row.rounds ?? []).map((r) => <i key={r.n} className={`${r.status === "missing" ? (quiet ? "q" : "x") : r.status === "convert" ? "w" : "ok"}${liveRound === r.n ? " on" : ""}`} title={`Round ${r.n} — ${r.slots.map((s) => `${nameOf(s.screen)}: ${s.status}`).join(", ")}`} onClick={() => mode === "run" && onFire(r.cue)}>{r.n}</i>)}
+    {!quiet && row.rounds?.some((r) => r.status !== "ready") && <div className="rnote">{[...new Set(row.rounds.flatMap((r) => r.slots.filter((s) => s.status !== "ready").map((s) => `${nameOf(s.screen)}: ${s.status === "missing" ? "none delivered" : "will convert"}`)))].join(" · ")}</div>}
   </div>;
 }
 
@@ -86,7 +92,7 @@ export function Board() {
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === "Escape" && !useStore.getState().drawer) useStore.getState().select(null); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, []);
   const say = (m: string) => setToast(m);
   if (!board || !doc) return <div className="dim" style={{ padding: 20 }}>Loading the card…</div>;
-  const screens = board.screens.map((s) => s.id);
+  const screens: ScreenRef[] = board.screens.map((s) => ({ id: s.id, name: s.name }));
   const run = mode === "run";
   const liveRow = state?.bout ?? null; const liveRound = state?.round ?? undefined;
   const nextRow = liveRow ? board.rows[board.rows.findIndex((r) => r.id === liveRow) + 1]?.id ?? null : null;
@@ -111,7 +117,7 @@ export function Board() {
       <div className="startcard">
         <h2>Drop the bout sheet here</h2>
         <p>The promoter's timing sheet or bout sheet (PDF). The card fills in — fighters, corners, rounds, titles — and every graphic the show needs appears on the board: walkouts, fight base, rounds, winners. Then drop the graphics folder on the same window.</p>
-        <div className="gorow"><button className="btn primary" onClick={dropSheetBtn}>Choose a sheet…</button><button className="btn" onClick={() => useStore.getState().setDrawer("Screens")}>Load the venue's screens first</button><button className="btn" onClick={() => useStore.getState().loadSample()}>Try the sample card</button></div>
+        <div className="gorow"><button className="btn primary" onClick={dropSheetBtn}>Choose a sheet…</button><button className="btn" onClick={() => useStore.getState().setDrawer("Card")}>Build the card by hand</button><button className="btn" onClick={() => useStore.getState().setDrawer("Screens")}>Load the venue's screens first</button><button className="btn" onClick={() => useStore.getState().loadSample()}>Try the sample card</button></div>
         <input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const diff = await dropSheet(await f.text(), f.name); say(diff.length ? `Sheet loaded` : "Sheet loaded"); }} />
         <p className="dim small">Already have a project? Click the show name at the top.</p>
       </div>
@@ -124,7 +130,7 @@ export function Board() {
         <div className={`drop ${dragging ? "over" : ""} ${board.delivery ? "" : "empty"}`}>
           {busy ? <>
             <span className="prog"><i style={{ width: transcode.running ? `${(done / Math.max(1, jobs)) * 100}%` : "8%" }} /></span>
-            <span className="num">{prepare?.phase === "probing" ? `reading ${board.delivery?.files ?? ""} files…` : `${done}/${jobs} converted${failed ? ` · ${failed} failed` : ""}`}</span>
+            <span className="num">{prepare && !transcode.progress[Object.keys(transcode.progress)[0]] ? `${prepare.phase}${prepare.detail ? ` ${prepare.detail}` : "…"}` : `${done}/${jobs} converted${failed ? ` · ${failed} failed` : ""}`}</span>
           </> : board.delivery ? <>
             <span className="num"><b>{board.delivery.files} files</b> · {board.totals.ready} ready · {board.totals.convert} to convert · {board.totals.missing} missing{board.totals.unmatched ? ` · ${board.totals.unmatched} unplaced` : ""}</span>
             <button className="btn" onClick={() => runPrepare(dir, del)} title={dir}>Check the folder again</button>
@@ -182,11 +188,11 @@ export function Board() {
           {!run && <Selected />}
           {!run && <Checklist />}
           <div><h4>Screens{doc.screens.length && /placeholder/i.test(doc.review.flags.join(" ")) ? " · placeholders" : ""} <button className="x" onClick={() => useStore.getState().setDrawer("Screens")} title="Screens, groups and routing">Edit</button></h4>
-            {board.screens.map((s) => <div key={s.id} className="screen"><span className="id">{s.id}</span><span className={`cov ${s.total && s.ready === s.total ? "ok" : s.ready ? "w" : ""}`}>{s.ready}/{s.total}</span><span className="sz">{s.w}×{s.h}{s.name !== s.id ? ` · ${s.name}` : ""}</span><span className="bar"><i style={{ width: `${s.total ? (s.ready / s.total) * 100 : 0}%`, background: s.ready === s.total ? "var(--ok)" : "var(--warn)" }} /></span></div>)}
+            {board.screens.map((s) => <div key={s.id} className="screen"><span className="id" title={s.id}>{s.name}</span><span className={`cov ${s.total && s.ready === s.total ? "ok" : s.ready ? "w" : ""}`}>{s.ready}/{s.total}</span><span className="sz">{s.w}×{s.h}</span><span className="bar"><i style={{ width: `${s.total ? (s.ready / s.total) * 100 : 0}%`, background: s.ready === s.total ? "var(--ok)" : "var(--warn)" }} /></span></div>)}
           </div>
-          <div><h4>Missing · {board.missing.filter((m) => m.kind === "missing").length}</h4>
-            <div className="misslist">{board.missing.slice(0, 14).map((m, i) => <div key={i}><span className={`k ${m.kind === "convert" ? "w" : ""}`}>{m.row}</span><span>{m.label}{m.kind === "missing" ? ` — ${m.screens.join(", ")}` : ""}</span></div>)}{board.missing.length > 14 && <div className="dim">+{board.missing.length - 14} more</div>}{!board.missing.length && <div className="dim">{board.delivery ? "Everything the card needs is here." : "Drop the delivery to find out."}</div>}</div>
-          </div>
+          {board.delivery ? <div><h4>Missing · {board.missing.filter((m) => m.kind === "missing").length}</h4>
+            <div className="misslist">{board.missing.slice(0, 14).map((m, i) => <div key={i}><span className={`k ${m.kind === "convert" ? "w" : ""}`}>{m.row}</span><span>{m.label}{m.kind === "missing" ? ` — ${m.screens.map((id) => screens.find((s) => s.id === id)?.name ?? id).join(", ")}` : ""}</span></div>)}{board.missing.length > 14 && <div className="dim">+{board.missing.length - 14} more</div>}{!board.missing.length && <div className="dim">Everything the card needs is here.</div>}</div>
+          </div> : <div><h4>Graphics needed · {board.totals.slots}</h4><div className="dim" style={{ fontSize: 12 }}>{board.totals.slots} files across {board.screens.length} screens once the card is confirmed. Drop the promoter's folder to see what's there — or copy the request to send them the list.</div></div>}
           <div><h4>Sheet</h4>
             <div className="ver">{versions.length ? [...versions].reverse().slice(0, 3).map((v, i) => <span key={i}>{i === 0 ? <b>v{versions.length}</b> : `v${versions.length - i}`} · {new Date(v.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} {i === 0 && v.diff.length > 0 && v.diff[0] !== "first sheet" && <span className="diff">{v.diff.slice(0, 3).join(" · ")}</span>}</span>) : <span>{doc.source?.file ?? "no sheet yet"}</span>}
               <button className="btn" style={{ alignSelf: "flex-start" }} onClick={dropSheetBtn}>Drop a new sheet</button><input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const diff = await dropSheet(await f.text(), f.name); say(diff.length ? `Sheet merged: ${diff.slice(0, 4).join(" · ")}` : "Sheet merged — no changes"); }} />
@@ -199,7 +205,7 @@ export function Board() {
             <button className="btn" onClick={async () => say(await buildResolume())} disabled={!!build}>Resolume Arena <span>{(doc.build?.resolumeLayout ?? "per-screen") === "together" ? "SHOW + ROUNDS" : `${doc.surfaces.length} groups`} · {useStore.getState().cues.length} cols</span></button>
             <button className="btn" onClick={async () => { try { const r = await fetch("/api/bundle", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const b = await r.json(); say(`Bundle written to ${b.outDir} (${b.files.length} files)`); } catch (e: any) { say(e.message); } }}>Companion + cue sheet + disguise <span>bundle</span></button>
           </div>
-          <div className="legend"><span><i style={{ background: "var(--ok)" }} />ready</span><span><i style={{ background: "var(--warn)" }} />will convert</span><span><i style={{ border: "1px solid var(--miss)" }} />missing</span><span><i style={{ background: "var(--line2)" }} />not on this screen</span><span>squares = {screens.join(" · ")}</span></div>
+          <div className="legend"><span><i style={{ background: "var(--ok)" }} />ready</span><span><i style={{ background: "var(--warn)" }} />will convert</span><span><i style={{ border: "1px solid var(--miss)" }} />missing</span><span><i style={{ background: "var(--line2)" }} />not on this screen</span><span>squares = {screens.map((s) => s.name).join(" · ")}</span></div>
         </aside>}
       </div>
     </div>
