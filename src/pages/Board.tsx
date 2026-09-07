@@ -62,12 +62,12 @@ function Rounds({ row, screens, onFire, liveRound }: { row: BoardRow; screens: S
 /** The rail's first panel in Prepare: what's done, what's next — every line is a button to the thing that fixes it. */
 function Checklist() {
   const { board, doc, health, versions, setDrawer, hub } = useStore(); if (!board || !doc) return null;
-  const bouts = doc.data.bouts?.length ?? 0; const placeholders = /placeholder/i.test(doc.review.flags.join(" ")); const toConfirm = doc.review.flags.filter((f) => !/placeholder|no bouts yet/i.test(f)).length;
+  const bouts = doc.data.bouts?.length ?? 0; const noScreens = !doc.screens.length; const placeholders = noScreens || /placeholder/i.test(doc.review.flags.join(" ")); const toConfirm = doc.review.flags.filter((f) => !/placeholder|no bouts yet|no screens yet/i.test(f)).length;
   const engines = (health?.adapters ?? []).filter((a) => a.id !== "mock"); const resolume = engines.find((a) => a.id === "resolume");
   const built = (doc as any).built?.resolume as string | undefined;
   const steps: { done: boolean; text: string; action?: string; go?: () => void; soft?: boolean }[] = [
     { done: bouts > 0, text: bouts ? `Card: ${bouts} bouts${versions.length ? ` (sheet v${versions.length})` : ""}` : "Drop the bout sheet or timing sheet" },
-    { done: !placeholders, text: placeholders ? "Screens are placeholders — load the venue" : `Screens: ${doc.screens.length} from ${doc.screens.some((s) => s.venue?.source?.startsWith("pixelgrid")) ? "PixelGrid" : "the map"}`, action: placeholders ? (hub?.signedIn ? "Load from PixelGrid" : "Load screens") : "Edit", go: () => setDrawer("Screens") },
+    { done: !placeholders, text: noScreens ? "No screens yet — load the venue or add them" : placeholders ? "Screens are placeholders — load the venue" : `Screens: ${doc.screens.length} from ${doc.screens.some((s) => s.venue?.source?.startsWith("pixelgrid")) ? "PixelGrid" : "the map"}`, action: placeholders ? (hub?.signedIn ? "Load from PixelGrid" : "Load screens") : "Edit", go: () => setDrawer("Screens") },
     { done: !!board.delivery && board.totals.missing === 0, soft: !!board.delivery, text: !board.delivery ? "Drop the promoter's graphics folder" : board.totals.missing ? `Graphics: ${board.totals.ready} ready · ${board.totals.missing} missing` : `Graphics: all ${board.totals.ready} ready` },
     { done: toConfirm === 0, text: toConfirm ? `${toConfirm} thing${toConfirm > 1 ? "s" : ""} the sheet parser guessed` : "Card details confirmed", action: toConfirm ? "Confirm" : undefined, go: () => setDrawer("Card") },
     { done: !!resolume?.connected, text: resolume ? (resolume.connected ? "Resolume connected" : "Resolume not answering") : engines.length ? `${engines.map((e) => e.id).join(", ")} ${engines.every((e) => e.connected) ? "connected" : "offline"}` : "No engine yet — rehearsal mode", action: resolume?.connected ? undefined : "Connect", go: () => setDrawer("Engines") },

@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ShowDoc } from "../core/types.js";
 import type { HubClient, HubSession } from "../core/hub/client.js";
-import { PLACEHOLDER_SCREENS, DEFAULT_ROUTING } from "../core/parse/timing-sheet.js";
 
 export interface ProjectMeta { id: string; name: string; eventDate?: string; venue?: string; pack: string; createdAt: string; updatedAt: string; cloudUpdatedAt?: string | null; sync: "local" | "synced" | "ahead" | "behind" | "conflict" | "error"; error?: string; visibility?: "personal" | "company" }
 export interface HubState { token: string | null; session: HubSession | null; checkedAt?: string; error?: string }
@@ -22,9 +21,10 @@ export function blankShowDoc(name: string, o: { date?: string; venue?: string; p
   const doc: ShowDoc & { pack: string } = {
     schema: "surface/2.0", pack: o.pack ?? "boxing.fightnight",
     event: { id, name, date: o.date, venue: o.venue, walkOrder: ["red", "blue"], introOrder: ["red", "blue"] },
-    screens: PLACEHOLDER_SCREENS, surfaces: PLACEHOLDER_SCREENS.map((s) => ({ id: s.id, name: s.name, screens: [s.id] })),
-    data: { fighters: [], bouts: [], vts: [] }, routing: DEFAULT_ROUTING, customCues: [],
-    review: { status: "draft", flags: ["placeholder screens — import from PixelMapper or edit", "no bouts yet — import a bout sheet / timing sheet"] },
+    // truly blank: no invented screens, no routing — the venue comes from PixelGrid, screen maps, or the Screens drawer
+    screens: [], surfaces: [],
+    data: { fighters: [], bouts: [], vts: [] }, routing: {}, customCues: [],
+    review: { status: "draft", flags: ["no screens yet — load the venue (PixelGrid, screen maps) or add screens", "no bouts yet — drop a sheet or build the card by hand"] },
   };
   return doc;
 }

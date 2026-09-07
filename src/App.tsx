@@ -40,8 +40,9 @@ export default function App() {
   const engines = (health?.adapters ?? []).filter((a) => a.id !== "mock"); const online = engines.filter((a) => a.connected);
   const engineName = (id: string) => ({ resolume: "Resolume", disguise: "disguise", companion: "Companion", mock: "Rehearsal" } as Record<string, string>)[id] ?? id;
   const enginePill = !engines.length ? { cls: "", text: "Rehearsal · no engine" } : online.length === engines.length ? { cls: "ok", text: `${online.map((a) => engineName(a.id)).join(" + ")} · connected` } : { cls: "bad", text: `${engines.filter((a) => !a.connected).map((a) => engineName(a.id)).join(", ")} offline` };
-  const toConfirm = doc?.review.flags.filter((f) => !/placeholder|no bouts yet/i.test(f)).length ?? 0;
+  const toConfirm = doc?.review.flags.filter((f) => !/placeholder|no bouts yet|no screens yet/i.test(f)).length ?? 0;
   const open = (k: string) => { setDrawer(k); setMenu(false); };
+  const newShow = async () => { setMenu(false); await useStore.getState().createProject({ name: "Untitled show" }); useStore.getState().setMode("prepare"); };
   return (
     <div className="app">
       <header className="top">
@@ -54,6 +55,7 @@ export default function App() {
           <div className="menu" ref={menuRef}>
             <button className={`more ${menu || drawer ? "on" : ""}`} onClick={() => setMenu((m) => !m)}>Setup ▾</button>
             {menu && <div className="dropdown">
+              <button onClick={newShow}>New blank show<small>empty card, no screens</small></button>
               {SETUP.map((s) => <button key={s.key} onClick={() => open(s.key)}>{s.label}<small>{s.hint}</small></button>)}
               <div className="sep">Advanced</div>
               {ADVANCED.map((s) => <button key={s.key} onClick={() => open(s.key)}>{s.label}<small>{s.hint}</small></button>)}
