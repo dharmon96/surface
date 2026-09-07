@@ -7,6 +7,7 @@ import type { mediaManifest } from "../gen/engines.js";
 import type { Probe } from "./intake.js";
 import { tokenise, screenFromEvidence, type FileEvidence, type ScreenSynonyms, type GraphicKind } from "./tokens.js";
 import { resolveScheme, sheetBout, sheetSide, fightersNamed, type Scheme } from "./scheme.js";
+import { applyOcr, type OcrResult } from "./ocr.js";
 
 export interface Assignment { slot: string; file: string; confidence: number; reasons: string[]; issues: string[]; update?: boolean }
 export interface IntakeResult {
@@ -33,11 +34,11 @@ function slotParts(slot: Slot) {
   return null;
 }
 
-export interface IntakeOptions { override?: Partial<Pick<Scheme, "direction" | "aIs">> }
+export interface IntakeOptions { override?: Partial<Pick<Scheme, "direction" | "aIs">>; ocr?: Record<string, OcrResult> }
 
 export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: ScreenSynonyms, opts: IntakeOptions = {}): IntakeResult {
   const byPath = new Map(probes.map((p) => [p.file, p]));
-  const files = probes.map((p) => tokenise(p.file, byPath.get(p.file)));
+  const files = probes.map((p) => { const ev = tokenise(p.file, byPath.get(p.file)); const o = opts.ocr?.[p.file]; return o ? applyOcr(ev, o) : ev; });
   const scheme = resolveScheme(files, doc);
   if (opts.override?.direction) { scheme.direction = opts.override.direction; scheme.evidence.push(`direction set by operator: ${scheme.direction}`); }
   if (opts.override?.aIs) { scheme.aIs = opts.override.aIs; scheme.evidence.push(`a = ${scheme.aIs} set by operator`); }
@@ -53,6 +54,7 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
     const graphic = KIND_TO_GRAPHIC[ev.kind];
     const scr = screenFromEvidence(ev, syn);
     if (scr.surface) reasons.push(`screen ${scr.surface} by ${scr.by}`);
+    if ((ev as any).ocr?.words?.length) reasons.push(`ocr: ${(ev as any).ocr.words.slice(0, 4).join(" ")}`);
     // which bout / side does this file belong to?
     let boutOrder: number | null = null; let side: "red" | "blue" | null = null; let strength = 0;
     const named = fightersNamed(ev, doc);

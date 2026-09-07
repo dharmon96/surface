@@ -6,13 +6,13 @@ import type { RunnerState } from "../core/engine/runner";
 const j = async <T,>(url: string, init?: RequestInit): Promise<T> => { const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...init }); if (!r.ok) throw new Error(`${init?.method ?? "GET"} ${url} → ${r.status}`); return r.json(); };
 
 export interface Health { adapters: { id: string; connected: boolean; detail?: string; latencyMs?: number; lastError?: string }[]; uptimeSec: number }
-export interface IntakeView { dir: string; probes: number; scheme: any; assignments: any[]; unmatched: any[]; ignored: any[]; unfilled: string[]; issues: string[]; jobs: any[] }
+export interface IntakeView { dir: string; probes: number; ocrRan?: number; scheme: any; assignments: any[]; unmatched: any[]; ignored: any[]; unfilled: string[]; issues: string[]; jobs: any[] }
 
 interface S {
   doc: ShowDoc | null; cues: Cue[]; state: RunnerState | null; health: Health | null; intake: IntakeView | null; log: string[]; socket: Socket | null; error: string | null;
   transcode: { running: boolean; progress: Record<string, { phase: string; pct?: number; detail?: string }>; result?: any };
   load(): Promise<void>; connect(): void; go(n: number): Promise<void>; next(): Promise<void>; prev(): Promise<void>; panic(): Promise<void>;
-  approve(): Promise<void>; saveDoc(d: ShowDoc): Promise<void>; runIntake(dir: string, override?: any, engine?: string): Promise<void>; refreshHealth(): Promise<void>;
+  approve(): Promise<void>; saveDoc(d: ShowDoc): Promise<void>; runIntake(dir: string, override?: any, engine?: string, ocr?: boolean): Promise<void>; refreshHealth(): Promise<void>;
   startTranscode(deleteOriginals: boolean): Promise<void>;
 }
 
@@ -38,7 +38,7 @@ export const useStore = create<S>((set, get) => ({
   async panic() { await j("/api/panic", { method: "POST" }); },
   async approve() { await j("/api/review/approve", { method: "POST" }); await get().load(); },
   async saveDoc(d) { await j("/api/doc", { method: "PUT", body: JSON.stringify(d) }); await get().load(); },
-  async runIntake(dir, override, engine) { const r = await j<IntakeView>("/api/intake", { method: "POST", body: JSON.stringify({ dir, override, engine }) }); set({ intake: r }); },
+  async runIntake(dir, override, engine, ocr) { const r = await j<IntakeView>("/api/intake", { method: "POST", body: JSON.stringify({ dir, override, engine, ocr }) }); set({ intake: r }); },
   async startTranscode(deleteOriginals) { set((st) => ({ transcode: { ...st.transcode, running: true, progress: {} } })); await j("/api/transcode", { method: "POST", body: JSON.stringify({ deleteOriginals }) }); },
   async refreshHealth() { set({ health: await j<Health>("/api/health") }); },
 }));

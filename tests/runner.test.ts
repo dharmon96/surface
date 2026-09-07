@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { deriveCues, loadShowDoc } from "../core/index.js";
+import { deriveCues, loadShowDoc, resolumePlan } from "../core/index.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter } from "../core/engine/adapters.js";
 
@@ -60,5 +60,27 @@ describe("adapters translate ops to engine calls", () => {
     const ad = new DisguiseAdapter("d3", { transports: { MAIN: "MAIN_T" } }, f); await ad.init(doc);
     await ad.apply({ kind: "fireCue", cue: byId("B08.R01") });
     expect(bodies.length).toBe(2); expect(bodies[0].transports[0].transport.name).toBe("MAIN_T"); expect(bodies[0].transports[0].value).toBe("8.11"); expect(bodies[1].transports[0].transport.name).toBe("RIBBON");
+  });
+});
+
+describe("stinger transitions", () => {
+  it("plays the stinger over the in-scope surfaces, then lands the cue at the cover frame", async () => {
+    const d = JSON.parse(JSON.stringify(doc)); d.stingers = [{ id: "whoosh", name: "Whoosh", file: "TX_whoosh.mov", durationSec: 1.2, coverSec: 0.5 }]; d.transitions = { WINNER: "stinger:whoosh" };
+    const cs = deriveCues(d); const win = cs.find((c) => c.id === "B08.WIN_RED")!; expect(win.transition).toEqual({ kind: "stinger", stinger: "whoosh" });
+    expect(cs.find((c) => c.id === "B08.R01")!.transition).toBeUndefined();
+    const ft = fakeTimers(); const mock = new MockAdapter(); const r = new Runner(d, cs, [mock], ft);
+    const p = r.go(win.n); await Promise.resolve(); await new Promise((res) => setImmediate(res));
+    expect(mock.log.at(-1)!.op.kind).toBe("stinger"); expect(mock.log.at(-1)!.detail).toMatch(/whoosh over MAIN,RIBBON,IMAG_L,IMAG_R \(cover 0.5s\)/);
+    expect(r.getState().current).toBeNull();                       // not landed yet
+    await ft.advance(500); await p;
+    expect(r.getState().current).toBe(win.n); expect(mock.log.some((l) => l.op.kind === "fireCue" && l.op.cue?.id === "B08.WIN_RED")).toBe(true); // winner also clears OVERLAY, so the last op is a clearLayer
+  });
+  it("Resolume adapter fires the stinger's reserved column on each in-scope group", async () => {
+    const d = JSON.parse(JSON.stringify(doc)); d.stingers = [{ id: "whoosh", name: "Whoosh", file: "TX_whoosh.mov", durationSec: 1.2, coverSec: 0.5 }];
+    const cs = deriveCues(d); const calls: string[] = []; const f = (async (url: string, init?: any) => { calls.push(`${init?.method ?? "GET"} ${String(url).replace("http://x/api/v1", "")}`); return { ok: true, json: async () => ({}) } as any; }) as any;
+    const ad = new ResolumeAdapter("http://x/api/v1", f); await ad.init(d, cs);
+    await ad.apply({ kind: "stinger", stinger: d.stingers[0], surfaces: ["MAIN", "RIBBON"] });
+    expect(calls.slice(-2)).toEqual([`POST /composition/layergroups/1/columns/${cs.length + 1}/connect`, `POST /composition/layergroups/2/columns/${cs.length + 1}/connect`]);
+    const plan = resolumePlan(d, cs, "C:/m", "C:/s.avc"); expect(plan.filter((o: any) => o.op === "openClip" && /STINGER_whoosh/.test(o.name)).length).toBe(4); expect((plan[0] as any).columns).toBe(cs.length + 1);
   });
 });

@@ -9,7 +9,7 @@ import type { EngineAdapter, EngineOp } from "./adapter.js";
 export interface LayerState { slot: string | null; since: number; cueN: number | null }
 export interface SurfaceState { BASE: LayerState; OVERLAY: LayerState; FULL: LayerState }
 export interface RunnerState { current: number | null; next: number | null; surfaces: Record<string, SurfaceState>; round: number | null; bout: string | null; firedAt: number | null; timers: number }
-export type RunnerEvent = { type: "state"; state: RunnerState } | { type: "fired"; cue: Cue; ops: EngineOp[] } | { type: "revert"; surface: string; layer: LayerId; cueN: number } | { type: "error"; adapter: string; error: string };
+export type RunnerEvent = { type: "state"; state: RunnerState } | { type: "fired"; cue: Cue; ops: EngineOp[] } | { type: "stinger"; cue: Cue; stinger: import("../types.js").Stinger } | { type: "revert"; surface: string; layer: LayerId; cueN: number } | { type: "error"; adapter: string; error: string };
 
 export interface RunnerOpts { now?: () => number; setTimeout?: (fn: () => void, ms: number) => any; clearTimeout?: (h: any) => void }
 
@@ -31,7 +31,21 @@ export class Runner {
   /** Fire a cue: apply its per-surface actions to state, dispatch to adapters, arm timed reverts / follow-ons. */
   async go(n: number): Promise<Cue | undefined> {
     const c = this.cue(n); if (!c) return undefined;
-    const t = this.now(); const ops: EngineOp[] = [{ kind: "fireCue", cue: c }];
+    // stinger transition: fire the alpha animation over FULL on the in-scope surfaces now, land the cue itself at the cover frame
+    if (c.transition?.kind === "stinger") {
+      const st = this.doc.stingers?.find((x) => x.id === (c.transition as any).stinger);
+      if (st) {
+        const surfaces = st.surfaces ?? this.expand(c.scope);
+        await this.dispatch([{ kind: "stinger", stinger: st, surfaces, cue: c }]);
+        this.emit({ type: "stinger", cue: c, stinger: st } as any);
+        await new Promise<void>((r) => this.arm(`stinger:${n}`, st.coverSec * 1000, r));
+      }
+    }
+    return this.land(c);
+  }
+  private expand(scope: string[]) { return scope.includes("ALL") ? this.doc.surfaces.filter((s) => !s.independent).map((s) => s.id) : scope; }
+  private async land(c: Cue): Promise<Cue> {
+    const n = c.n; const t = this.now(); const ops: EngineOp[] = [{ kind: "fireCue", cue: c }];
     for (const target of c.targets) {
       const S = this.state.surfaces[target.surface]; if (!S) continue;
       for (const a of target.actions) {

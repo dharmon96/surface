@@ -5,7 +5,8 @@
 import type { Cue, LayerId, ShowDoc } from "../types.js";
 
 export interface EngineOp {
-  kind: "fireCue" | "clearLayer" | "setText" | "openClip" | "panic" | "revertBase";
+  kind: "fireCue" | "clearLayer" | "setText" | "openClip" | "panic" | "revertBase" | "stinger";
+  stinger?: import("../types.js").Stinger; surfaces?: string[];
   cue?: Cue;
   surface?: string; layer?: LayerId; key?: string; value?: string; slot?: string; file?: string;
 }

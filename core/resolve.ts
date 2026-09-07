@@ -10,6 +10,7 @@ export function resolve(doc: ShowDoc, cues: Cue[]): Cue[] {
   const all = expandScope(doc, ["ALL"]);
   return cues.map((c) => {
     const scope = expandScope(doc, c.scope);
+    if (!c.transition && doc.transitions) { const g = c.id.split(".")[1]?.replace(/_(RED|BLUE|DRAW|B\d+|\d+|[A-Z]{2})$/, "").replace(/^R\d\d$/, "ROUND").replace(/^WIN$/, "WINNER").replace(/^WALK$/, "WALKOUT").replace(/^INTRO$/, "FIGHTER"); const t = doc.transitions[g ?? ""] ?? doc.transitions["*"]; if (t?.startsWith("stinger:")) c = { ...c, transition: { kind: "stinger", stinger: t.slice(8) } }; else if (t?.startsWith("fade:")) c = { ...c, transition: { kind: "fade", sec: Number(t.slice(5)) } }; }
     const isAll = all.length === scope.length && all.every((s) => scope.includes(s));
     return {
       ...c,

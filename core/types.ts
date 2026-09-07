@@ -59,8 +59,11 @@ export interface SurfaceActions {
 export type Transition =
   | { kind: "cut" }
   | { kind: "fade"; sec: number }
-  | { kind: "stinger"; media: MediaRef; coverFrameSec: number }      // play stinger on FULL, swap BASE at cover frame
+  | { kind: "stinger"; stinger: string }                              // id into doc.stingers: alpha animation over FULL; the cue lands at its cover frame
   | { kind: "dve"; preset: string; sec: number };                     // squeeze / fly, executed by adapter (Resolume transform, ATEM DVE)
+
+/** A stinger is broadcast's wipe: an alpha animation that fully covers the picture at `coverSec`; the real change is a hard cut hidden under it. */
+export interface Stinger { id: string; name: string; file: string | null; durationSec: number; coverSec: number; surfaces?: string[] /* default: the cue's scope */ }
 
 export interface Cue {
   n: number;                 // cue number == Resolume column number; stable once published
@@ -95,6 +98,9 @@ export interface ShowDoc {
   /** graphic type -> default surfaces (pack defaults, user overrides) */
   routing: Record<string, string[]>;
   customCues?: Partial<Cue>[];
+  stingers?: Stinger[];
+  /** default transition per graphic type, e.g. { WINNER: "stinger:whoosh", UP_NEXT: "stinger:whoosh" } */
+  transitions?: Record<string, string>;
   review: { status: "draft" | "approved"; flags: string[] };
 }
 

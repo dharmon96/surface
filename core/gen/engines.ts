@@ -46,9 +46,16 @@ export function resolumePlan(doc: ShowDoc, cues: Cue[], mediaRoot: string, saveP
       }
     }
   }
+  // stingers live in reserved columns after the cue columns: FULL layer of every group holds the alpha animation
+  (doc.stingers ?? []).forEach((st, i) => {
+    const col = cues.length + 1 + i; ops[0] = { op: "grow", columns: col, layers: surfaces.length * RESOLUME_LAYERS.length };
+    ops.push({ op: "renameColumn", index: col, name: `TX ${st.id}` });
+    for (const s of surfaces) ops.push({ op: "openClip", layer: layerIndex(s.id, "FULL"), column: col, url: st.file ? `file:///${mediaRoot}/${st.file}` : "source:///video/Text Block", name: `STINGER_${st.id}_${s.id}` });
+  });
   ops.push({ op: "save", url: `file:///${savePath}` });
   return ops;
 }
+export function stingerColumn(doc: ShowDoc, cues: Cue[], stingerId: string): number | null { const i = (doc.stingers ?? []).findIndex((s) => s.id === stingerId); return i < 0 ? null : cues.length + 1 + i; }
 
 /** Serialise a plan as a standalone Python script (for Author-only mode when no Surface process runs beside Arena). */
 export function resolumeScript(plan: ResolumeOp[], base = "http://127.0.0.1:8080/api/v1"): string {

@@ -2,6 +2,7 @@ import { createSocket, type Socket } from "node:dgram";
 import type { Cue, ShowDoc } from "../types.js";
 import { resolumeAddress, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
 import { expandScope } from "../naming.js";
+import { stingerColumn } from "../gen/engines.js";
 
 // ───────────────────────────────────────────── mock: records everything (tests, dry-run, "Author-only" preview)
 export class MockAdapter implements EngineAdapter {
@@ -10,6 +11,7 @@ export class MockAdapter implements EngineAdapter {
   async apply(op: EngineOp) {
     let detail: string = op.kind;
     if (op.kind === "fireCue" && op.cue) { const r = op.cue.resolume; detail = r?.groups === "ALL" ? `column ${r.column} → composition` : `column ${r?.column} → groups ${(r?.groups as string[])?.join(",")}`; }
+    if (op.kind === "stinger") detail = `stinger ${op.stinger?.id} over ${op.surfaces?.join(",")} (cover ${op.stinger?.coverSec}s)`;
     if (op.kind === "clearLayer" || op.kind === "revertBase") detail = `${op.kind} ${op.surface}/${op.layer}`;
     if (op.kind === "setText") detail = `text ${op.surface}/${op.layer} ${op.key}=${op.value}`;
     this.log.push({ t: Date.now(), op, detail });
@@ -20,17 +22,20 @@ export class MockAdapter implements EngineAdapter {
 
 // ───────────────────────────────────────────── Resolume Arena — REST /api/v1 (7.8+). Column == cue.n; group per surface.
 export class ResolumeAdapter implements EngineAdapter {
-  id = "resolume"; private doc!: ShowDoc; private ok = false; private lastError?: string; private latency?: number;
+  id = "resolume"; private doc!: ShowDoc; private cues: Cue[] = []; private ok = false; private lastError?: string; private latency?: number;
   constructor(private base = "http://127.0.0.1:8080/api/v1", private fetchImpl: typeof fetch = fetch) {}
   private async req(method: string, path: string, body?: string | object) {
     const t = Date.now();
     const r = await this.fetchImpl(this.base + path, { method, headers: { "Content-Type": typeof body === "string" ? "text/plain" : "application/json" }, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
     this.latency = Date.now() - t; if (!r.ok) throw new Error(`${method} ${path} → ${r.status}`); this.ok = true; return r;
   }
-  async init(doc: ShowDoc) { this.doc = doc; try { await this.req("GET", "/composition"); } catch (e: any) { this.ok = false; this.lastError = e.message; } }
+  async init(doc: ShowDoc, cues: Cue[] = []) { this.doc = doc; this.cues = cues; try { await this.req("GET", "/composition"); } catch (e: any) { this.ok = false; this.lastError = e.message; } }
   async apply(op: EngineOp) {
     try {
-      if (op.kind === "fireCue" && op.cue) {
+      if (op.kind === "stinger" && op.stinger) {
+        const col = stingerColumn(this.doc, this.cues, op.stinger.id); if (col === null) throw new Error(`stinger ${op.stinger.id} has no column`);
+        for (const s of op.surfaces ?? []) await this.req("POST", `/composition/layergroups/${resolumeAddress(this.doc, s, "BASE").group}/columns/${col}/connect`);
+      } else if (op.kind === "fireCue" && op.cue) {
         const r = op.cue.resolume!; const groups = r.groups === "ALL" ? null : r.groups;
         if (!groups) await this.req("POST", `/composition/columns/${r.column}/connect`);
         else for (const s of groups) await this.req("POST", `/composition/layergroups/${resolumeAddress(this.doc, s, "BASE").group}/columns/${r.column}/connect`);

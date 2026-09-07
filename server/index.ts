@@ -26,6 +26,7 @@ import { probe } from "../core/intake/intake.js";
 import { intake } from "../core/intake/match.js";
 import { planTranscodes } from "../core/intake/transcode.js";
 import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
+import { ocrAvailable, ocrFile, type OcrResult } from "../core/intake/ocr.js";
 import { toShowCall, fromShowCall } from "../core/integrations/showcall.js";
 import { fromPixelMapper, contentGuideRows } from "../core/integrations/pixelmapper.js";
 import { buildBundle } from "../core/index.js";
@@ -72,9 +73,16 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch {} }
     const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
     const man = mediaManifest(doc, cues);
-    const r = intake(doc, man, probes, syn, { override: q.body?.override });
+    let r = intake(doc, man, probes, syn, { override: q.body?.override });
+    // second pass: OCR only the files the first pass could not place confidently, then match again with the words it read
+    let ocrRan = 0; if (q.body?.ocr && (await ocrAvailable())) {
+      const weak = new Set([...r.unmatched.map((u) => u.file), ...r.assignments.filter((a) => a.confidence < 0.7).map((a) => a.file)]);
+      const ocr: Record<string, OcrResult> = {}; const list = probes.filter((p) => weak.has(p.file)); let i = 0;
+      await Promise.all(Array.from({ length: 3 }, async () => { for (let p = list[i++]; p; p = list[i++]) { try { ocr[p.file] = await ocrFile(join(dir, p.file), p); ocrRan++; io.emit("intake", { phase: "ocr", file: p.file, done: ocrRan, total: list.length }); } catch {} } }));
+      r = intake(doc, man, probes, syn, { override: q.body?.override, ocr });
+    }
     const jobs = planTranscodes(r.assignments, probes, man, { engine: q.body?.engine ?? "resolume", outDir: q.body?.outDir ?? join(dir, "..", "media"), deleteOriginals: false });
-    lastIntake = { dir, probes: probes.length, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
+    lastIntake = { dir, probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
     res.json(lastIntake);
   });
   app.get("/api/intake", (_q, res) => res.json(lastIntake));
