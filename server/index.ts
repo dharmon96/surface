@@ -452,7 +452,10 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) app.get(/^(?!\/api|\/socket\.io).*/, (_q, res) => res.sendFile(join(process.env.SURFACE_STATIC!, "index.html")));
   const port = cfg.port ?? 8090;
   const bind = cfg.bind ?? "127.0.0.1"; // loopback unless the operator opens it up for Bridge mode (--bind 0.0.0.0)
-  await new Promise<void>((r) => http.listen(port, bind, r));
+  await new Promise<void>((resolve, reject) => {
+    http.once("error", (e: any) => reject(e.code === "EADDRINUSE" ? new Error(`port ${port} is already in use on ${bind} — is another Surface (or \`npm run server\`) running? Stop it, or start with --port ${port + 1}`) : e));
+    http.listen(port, bind, resolve);
+  });
   console.log(`Surface ${doc.event.name} — ${cues.length} cues · ${doc.surfaces.length} surfaces · adapters: ${adapters.map((a) => `${a.id}${a.status().connected ? "" : " (offline)"}`).join(", ")} · http://${bind === "0.0.0.0" ? "<this PC's IP>" : bind}:${port}`);
   return { app, http, io, runner, adapters, close: async () => { for (const a of adapters) await a.close(); io.close(); http.close(); } };
 }
@@ -467,5 +470,5 @@ if (process.argv[1] && /server[\\/]index\.[tj]s$/.test(process.argv[1])) {
   if (flag("port", "")) cfg.port = Number(flag("port", "8090"));
   if (flag("bind", "")) cfg.bind = flag("bind", "");
   if (flag("data", "")) cfg.dataDir = flag("data", ""); if (flag("hub", "")) cfg.hubUrl = flag("hub", "");
-  startServer(show, cfg).catch((e) => { console.error(e); process.exit(1); });
+  startServer(show, cfg).catch((e) => { console.error(`Surface could not start: ${e.message}`); process.exit(1); });
 }

@@ -11,9 +11,13 @@ const { spawn, execFileSync } = require("node:child_process");
 const HUB = process.env.SURFACE_HUB || "https://mantaglow.com";
 
 const DEV = process.env.SURFACE_DEV === "1";
-const PORT = Number(process.env.SURFACE_PORT || 8090);
+let PORT = Number(process.env.SURFACE_PORT || 8090); // may move to the next free port if 8090 is taken (see startServer)
 const userDir = () => app.getPath("userData");
 let serverProc = null;
+const net = require("node:net");
+/** is a Surface server already answering on this port? (a dev `npm run server`, or a previous app instance) */
+async function surfaceAlive(port) { try { const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(800) }); if (!r.ok) return false; const j = await r.json(); return Array.isArray(j.adapters); } catch { return false; } }
+function portFree(port) { return new Promise((resolve) => { const s = net.createServer(); s.once("error", () => resolve(false)); s.listen(port, "127.0.0.1", () => s.close(() => resolve(true))); }); }
 // outputs are pixel-exact: no DPI scaling on any display, no frame-rate throttling when an output window is hidden behind another
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -27,7 +31,11 @@ function ensureDefaults() {
   return { show, cfg };
 }
 
-function startServer(show, cfg) {
+async function startServer(show, cfg) {
+  // a Surface server already on the port (dev `npm run server`, or an app instance that is still running) is simply reused
+  if (await surfaceAlive(PORT)) { console.log(`[surface] using the server already running on :${PORT}`); return true; }
+  // something else owns the port: move to the next free one rather than dying with EADDRINUSE
+  for (let p = PORT; p < PORT + 20; p++) { if (await portFree(p)) { if (p !== PORT) console.log(`[surface] :${PORT} is taken — using :${p}`); PORT = p; break; } }
   // tsx is a dev dependency; in a packaged build the server is prebuilt to dist-server/index.js
   const built = path.join(__dirname, "..", "dist-server", "server", "index.js");
   const common = [show, "--config", cfg, "--port", String(PORT), "--data", userDir(), "--hub", HUB];
