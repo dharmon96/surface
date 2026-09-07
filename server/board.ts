@@ -15,7 +15,7 @@ import type { ShowDoc, Cue } from "../core/types.js";
 import type { ManifestEntry } from "../core/intake/execute.js";
 
 export type SlotStatus = "ready" | "convert" | "missing";
-export interface BoardSlot { slot: string; screen: string; w: number; h: number; status: SlotStatus; file?: string; out?: string; thumb?: string; note?: string; confidence?: number }
+export interface BoardSlot { slot: string; screen: string; w: number; h: number; status: SlotStatus; file?: string; out?: string; thumb?: string; note?: string; confidence?: number; audio?: { integratedLufs: number; gainDb: number; targetLufs: number; capped: boolean } }
 export interface BoardCell { key: string; label: string; cues: { n: number; id: string; name: string }[]; slots: BoardSlot[]; status: SlotStatus | "none"; thumb?: string; behaviour?: string }
 export interface BoardRow { id: string; kind: "event" | "bout"; order: number; title: string; red?: { id: string; name: string; country?: string }; blue?: { id: string; name: string; country?: string }; meta: { rounds?: number; weightClass?: string; title?: string; isMain?: boolean; isCoMain?: boolean }; flags: string[]; cells: Record<string, BoardCell>; rounds?: { n: number; cue: number; status: SlotStatus | "none"; slots: BoardSlot[] }[] }
 export interface Board {
@@ -49,7 +49,7 @@ export function buildBoard(i: BoardInputs): Board {
       const slot = a.media.slot; const sc = doc.screens.find((s) => slot.includes(`_${s.id}_`)) ?? screenOf(t.surface);
       const v = verified.get(slot), as = assigned.get(slot), job = jobs.get(slot); const known = doc.media?.[slot] && i.mediaDir ? join(i.mediaDir, doc.media[slot]) : null;
       let s: BoardSlot;
-      if (known && existsSync(known)) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? doc.media![slot], out: known, thumb: i.thumbUrl(known), note: v?.fallback ? `encoded as ${v.codec} (${v.fallback})` : undefined, confidence: as?.confidence };
+      if (known && existsSync(known)) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? doc.media![slot], out: known, thumb: i.thumbUrl(known), note: [v?.fallback ? `encoded as ${v.codec} (${v.fallback})` : "", v?.audio && Math.abs(v.audio.gainDb) >= 0.5 ? `audio ${v.audio.gainDb > 0 ? "+" : ""}${v.audio.gainDb} dB → ${v.audio.targetLufs} LUFS` : ""].filter(Boolean).join("; ") || undefined, confidence: as?.confidence, audio: v?.audio ? { integratedLufs: v.audio.integratedLufs, gainDb: v.audio.gainDb, targetLufs: v.audio.targetLufs, capped: v.audio.capped } : undefined };
       else if (v) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? v.src, out: v.outputs[0], thumb: i.thumbUrl(v.outputs[0]), note: v.fallback ? `encoded as ${v.codec} (${v.fallback})` : undefined, confidence: as?.confidence };
       else if (as) { const needs = job ? job.action !== "copy" : false; s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: needs ? "convert" : "ready", file: as.file, thumb: i.intake ? i.thumbUrl(join(i.intake.dir, as.file)) : undefined, note: [...(job?.notes ?? []), ...as.issues].join("; ") || undefined, confidence: as.confidence }; }
       else s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "missing" };

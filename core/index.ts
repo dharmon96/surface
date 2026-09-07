@@ -10,7 +10,7 @@ import { disguiseCueTables, mediaManifest, resolumePlan, resolumeScript } from "
 
 export * from "./types.js";
 export { boxingFightNight, boxingPressConference, boxingWeighIn, resolve, withCustomCues, fromLegacyBoutJson, companionPage, writeCueSheet, disguiseCueTables, mediaManifest, resolumePlan, resolumeScript };
-export { fromPixelMapper, normalizePixelMapper, autoRouting, autoVenue, screensFromMapFiles, contentGuideRows } from "./integrations/pixelmapper.js";
+export { fromPixelMapper, normalizePixelMapper, autoRouting, autoVenue, autoOutputs, screensFromMapFiles, contentGuideRows } from "./integrations/pixelmapper.js";
 
 export const packs: Record<string, Pack> = { [boxingFightNight.id]: boxingFightNight, [boxingPressConference.id]: boxingPressConference, [boxingWeighIn.id]: boxingWeighIn };
 

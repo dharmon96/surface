@@ -1,0 +1,1 @@
+declare module "snappyjs" { export function uncompress(input: Uint8Array | ArrayBuffer | Buffer, maxLength?: number): Uint8Array; export function compress(input: Uint8Array | ArrayBuffer | Buffer): Uint8Array; }

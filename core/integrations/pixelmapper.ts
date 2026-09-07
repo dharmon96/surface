@@ -4,22 +4,23 @@
  * swapped for 90/270 rotation. A ScreenGroup becomes a Surface; ungrouped screens become one surface each.
  * We only read what PixelMapper already knows; Surface never writes back to it.
  */
-import type { Screen, Surface } from "../types.js";
+import type { Screen, Surface, OutputCanvas } from "../types.js";
 
 export interface PMPanel { id?: string; name?: string; resX?: number; resY?: number; pixelsW?: number; pixelsH?: number; pixelWidth?: number; pixelHeight?: number; resolutionX?: number; resolutionY?: number; widthPx?: number; heightPx?: number }
 export interface PMScreen { id: string; name: string; panel: PMPanel; panelsX: number; panelsY: number; rotation?: 0 | 90 | 180 | 270; canvasId?: string | null; visible?: boolean; notes?: string }
 export interface PMGroup { id: string; name: string; screenIds?: string[]; screens?: string[] }
-export interface PMProject { screens: PMScreen[]; screenGroups?: PMGroup[]; groups?: PMGroup[]; name?: string; venue?: string }
+export interface PMCanvas { id: string; name: string; width: number; height: number; processorId?: string | null }
+export interface PMProject { screens: PMScreen[]; screenGroups?: PMGroup[]; groups?: PMGroup[]; canvases?: PMCanvas[]; name?: string; venue?: string }
 
 const panelPx = (p: PMPanel) => ({ w: p.resX ?? p.pixelsW ?? p.pixelWidth ?? p.resolutionX ?? p.widthPx ?? 0, h: p.resY ?? p.pixelsH ?? p.pixelHeight ?? p.resolutionY ?? p.heightPx ?? 0 });
 /** PixelGrid saves `{ metadata, data: { screens: Record, screenGroups: Record } }` (the hub `project:<id>` value and the .pixelmap file); older exports used arrays. */
 export function normalizePixelMapper(input: any): PMProject {
   const d = input?.data ?? input; const arr = (x: any) => (Array.isArray(x) ? x : x && typeof x === "object" ? Object.values(x) : []);
-  return { name: input?.metadata?.name ?? d?.name, venue: input?.metadata?.venue ?? d?.venue, screens: arr(d?.screens), screenGroups: arr(d?.screenGroups ?? d?.groups) };
+  return { name: input?.metadata?.name ?? d?.name, venue: input?.metadata?.venue ?? d?.venue, screens: arr(d?.screens), screenGroups: arr(d?.screenGroups ?? d?.groups), canvases: arr(d?.canvases) };
 }
 const slug = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24) || "SCREEN";
 
-export function fromPixelMapper(input: PMProject | any): { screens: Screen[]; surfaces: Surface[]; screenWords: Record<string, string[]>; flags: string[] } {
+export function fromPixelMapper(input: PMProject | any): { screens: Screen[]; surfaces: Surface[]; screenWords: Record<string, string[]>; flags: string[]; outputs: OutputCanvas[] } {
   const project = normalizePixelMapper(input); const scene3d: any = input?.data?.scene3d ?? input?.scene3d;
   const flags: string[] = []; const used = new Set<string>();
   const screens: Screen[] = project.screens.filter((s) => s.visible !== false).map((s) => {
@@ -41,7 +42,15 @@ export function fromPixelMapper(input: PMProject | any): { screens: Screen[]; su
   for (const sc of screens) if (!grouped.has(sc.id)) surfaces.push({ id: sc.id, name: sc.name, screens: [sc.id], independent: /host|booth|table|scale|podium/i.test(sc.name) || undefined });
   // seed the promoter-word synonym table from the names PixelMapper uses
   const screenWords: Record<string, string[]> = {}; for (const sc of screens) screenWords[sc.id] = [sc.name.toLowerCase(), ...sc.name.toLowerCase().split(/[\s_-]+/).filter((w) => w.length > 3)];
-  return { screens, surfaces, screenWords, flags };
+  // canvases = processor inputs = our outputs; screens sit in them at their canvas position
+  const outputs: OutputCanvas[] = (project.canvases ?? []).map((c) => ({ id: slug(c.name || c.id), name: c.name || c.id, w: c.width, h: c.height, fit: "1:1" as const, pixelMapper: { canvasId: c.id, processor: c.processorId ?? undefined },
+    screens: project.screens.filter((s) => s.canvasId === c.id && s.visible !== false).map((s) => { const id = byPm.get(s.id)!; const sc = screens.find((x) => x.id === id)!; return { id, x: Math.round((s as any).posX ?? 0), y: Math.round((s as any).posY ?? 0), w: sc?.w, h: sc?.h, rotation: (s.rotation ?? 0) as 0 | 90 | 180 | 270 }; }).filter((x) => x.id) })).filter((o) => o.w > 0 && o.h > 0);
+  return { screens, surfaces, screenWords, flags, outputs };
+}
+
+/** No canvases known: one output per screen at the screen's own size (the usual "each processor input is one screen"). */
+export function autoOutputs(screens: Screen[]): OutputCanvas[] {
+  return screens.map((s) => ({ id: s.id, name: s.name, w: s.w, h: s.h, fit: "1:1" as const, screens: [{ id: s.id, x: 0, y: 0, w: s.w, h: s.h }] }));
 }
 
 /** Surface → the LED Content Guide facts PixelMapper's Show Book renders: one line per surface with size, aspect, codec and naming. */

@@ -78,9 +78,18 @@ npm run cli -- intake show.json examples/Fight\ Night --direction opener-first -
 - Sync = explicit, last-write-wins per project on `updatedAt`; both-changed → ours wins, theirs saved as `show.conflict-<ts>.json`, state `conflict`. Never sync automatically during a show.
 - The hub needs Surface seeded (`hasOffline: true`) and access granted — snippet in `docs/HUB.md`. `tests/hub.test.ts` runs a fake hub.
 
+## Player + outputs + audio (`player/`, `server/proxy.ts`, `src/output.tsx`, `docs/PLAYER.md`)
+
+- Two roles, same show doc: **Feed** (Surface prepares media + builds Resolume/disguise; preview only, browser proxies) and **Play** (Surface renders the show itself onto the PC's displays). Feed is what ships today; Play is the roadmap in `docs/PLAYER.md`.
+- `player/hap.ts`: HAP frame → DXT block buffer (Hap/Hap Alpha/Hap Q/Hap Q Alpha/Hap R; none/snappy/complex-chunked sections; multiple-images container). No pixel decode at show time — the GPU takes the DXT via `compressedTexImage2D` (S3TC / RGTC). `player/mov.ts` `Movie`: mp4box index only (all non-mdat boxes concatenated, `fileStart 0`, `getTrackSamplesInfo` for absolute offsets), samples read by byte range. Tests build HAP files with ffmpeg and compare a software DXT1 decode to ffmpeg's pixels.
+- Codecs: ffmpeg decodes HAP/DXV/NotchLC; encodes HAP (DXV only ≥7.1, NotchLC never). Preview proxies (`ProxyStore`: H.264 ≤960 px, VP9 webm for alpha; 202 while building, `building:` URL prefix in the UI) — **Playwright's Chromium has no H.264**, so proxy playback only verifies in Electron.
+- Outputs (`doc.outputs: OutputCanvas[]`): the canvases the LED processors take = PixelGrid canvases (`fromPixelMapper` returns them, screens at posX/posY) else `autoOutputs` (one per screen). `applyScreens` merges them (keeps existing display/fit). `GET/PUT /api/outputs`, `GET /api/outputs/:id` (canvas + screens + live layers via `liveScreens()`, shared with `/api/venue`), `POST /api/outputs/signal {identify,test,id}`. Electron: `list-displays`, `open-output {id,displayId,w,h}` (frameless kiosk on that display, `force-device-scale-factor=1`, no background throttling), `close-output`, `open-outputs`; page `output.html` (second Vite entry) renders the canvas with fit `1:1|scale|letterbox|stretch` and an Identify overlay. UI: Setup ▾ → Outputs.
+- Audio: `core/intake/loudness.ts` measures EBU R128 (`ebur128=peak=true`) and `levelMatch` computes one static gain to the show standard (default −18 LUFS, ceiling −1 dBTP, `capped` when the ceiling wins) — never dynamic; `execute.ts` bakes it (`-af volume=XdB -c:a aac`) for jobs that keep audio and records `audio` in the manifest / note. `doc.audio {targetLufs, ceilingDbTp, levelMatch, masterDb}`.
+
 ## Roadmap notes
 
 - **Stream Deck direct** (the "remove Companion" path): drive decks from Surface itself via `@elgato-stream-deck/node` (HID), laying the card out across any number of decks (bout pages, rounds, holds/panic pinned) with live feedback from the runner — the Companion generator stays as the fallback for venues that already run Companion.
+- **Play mode** next steps (see `docs/PLAYER.md`): WebGL HAP renderer in the output page (YCoCg shader), demux + snappy in a worker, master clock across outputs, `PlayerAdapter` as an `EngineAdapter`, Web Audio per-clip gain + master + meters, DXV/NotchLC → HAP at intake.
 - Live Resolume/disguise test still pending (no engine box); PixelGrid account link needs Surface seeded in the hub.
 
 ## Conventions

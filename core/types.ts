@@ -108,6 +108,11 @@ export interface ShowDoc {
   review: { status: "draft" | "approved"; flags: string[] };
   /** how the engine composition is laid out — see core/engine/adapter.ts */
   build?: { resolumeLayout?: ResolumeLayout; disguiseLayout?: ResolumeLayout };
+  /** physical outputs (Play mode): each = one raster the PC sends to a display port / LED processor input, with screens placed in it
+   *  1:1 — PixelGrid's canvases. `fit` handles the odd output that must be a standard size (1920x1080 monitor): scale or letterbox. */
+  outputs?: OutputCanvas[];
+  /** sound: the show's level standard for clips with audio (VTs, walkouts); matched per clip as one static gain at conversion */
+  audio?: { targetLufs: number; ceilingDbTp?: number; levelMatch: boolean; masterDb?: number };
   /** where converted media lives (absolute); slot → file relative to it, filled by transcode / test-pattern import */
   mediaRoot?: string;
   media?: Record<string, string>;
@@ -120,6 +125,15 @@ export interface ShowDoc {
  *               plays at once — plus a "ROUNDS" group holding the overlays so a round card never re-fires the walls.
  */
 export type ResolumeLayout = "per-screen" | "together";
+
+export interface OutputCanvas {
+  id: string; name: string; w: number; h: number;
+  screens: { id: string; x: number; y: number; w?: number; h?: number; rotation?: 0 | 90 | 180 | 270 }[];
+  /** which display shows it (Electron display id / label), and how the canvas meets a display of another size */
+  display?: { id?: number; label?: string; w?: number; h?: number };
+  fit?: "1:1" | "scale" | "letterbox" | "stretch";
+  pixelMapper?: { canvasId?: string; processor?: string };
+}
 
 export interface Pack {
   id: string;                                  // "boxing.fightnight"

@@ -49,3 +49,17 @@ describe("transcode executor", () => {
     const r = await executeTranscodes(jobs, { srcRoot: src }); expect(r.failed.length).toBe(1); expect(existsSync(join(root, "media3", "B01_WALKOUT_RED_MAIN_640x360.mov"))).toBe(false); expect(existsSync(join(root, "media3", "B01_WALKOUT_RED_MAIN_640x360.part.mov"))).toBe(false);
   }, 60_000);
 });
+
+describe("level matching", async () => {
+  const { measureLoudness, levelMatch } = await import("../core/intake/loudness.js");
+  it("measures a clip and computes one static gain to the standard, capped by true peak", async () => {
+    const { execFileSync } = await import("node:child_process"); const { mkdtempSync } = await import("node:fs"); const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "surface-lufs-")); const quiet = join(d, "quiet.mov");
+    // a -30 dBFS sine: integrated loudness lands near -33 LUFS, well below the -18 standard
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=3", "-af", "volume=-30dB", "-c:v", "libx264", "-c:a", "aac", "-shortest", quiet]);
+    const m = await measureLoudness(quiet); expect(m).not.toBeNull(); expect(m!.integratedLufs).toBeLessThan(-25);
+    const lm = levelMatch(m!, -18, -1); expect(lm.gainDb).toBeGreaterThan(5); expect(lm.gainDb + m!.truePeakDb).toBeLessThanOrEqual(-0.9);
+    const hot = levelMatch({ integratedLufs: -10, truePeakDb: -0.3 }, -18, -1); expect(hot.gainDb).toBe(-8); expect(hot.capped).toBe(false);
+    const peaky = levelMatch({ integratedLufs: -25, truePeakDb: -2 }, -18, -1); expect(peaky.gainDb).toBe(1); expect(peaky.capped).toBe(true); // wanted +7, peak only allows +1
+  });
+});

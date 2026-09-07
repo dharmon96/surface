@@ -7,15 +7,16 @@ import { Media } from "./pages/Media";
 import { Engines } from "./pages/Engines";
 import { Hub } from "./pages/Hub";
 import { Screens } from "./pages/Screens";
+import { Outputs } from "./pages/Outputs";
 
 /** The board is the app. Setup and the advanced views open as a drawer over it. */
 const SETUP: { key: string; label: string; hint: string }[] = [
-  { key: "Screens", label: "Screens & routing", hint: "from PixelGrid" }, { key: "Engines", label: "Engines", hint: "Resolume · disguise" }, { key: "Projects", label: "Projects & account", hint: "" },
+  { key: "Screens", label: "Screens & routing", hint: "from PixelGrid" }, { key: "Outputs", label: "Outputs", hint: "canvases → displays" }, { key: "Engines", label: "Engines", hint: "Resolume · disguise" }, { key: "Projects", label: "Projects & account", hint: "" },
 ];
 const ADVANCED: { key: string; label: string; hint: string }[] = [
   { key: "Card", label: "Card details", hint: "fighters, flags" }, { key: "Cues", label: "Cue list", hint: "" }, { key: "Media", label: "Media tools", hint: "manual intake" },
 ];
-const TITLES: Record<string, string> = { Screens: "Screens & routing", Engines: "Engines", Projects: "Projects & account", Card: "Card details", Cues: "Cue list", Media: "Media tools" };
+const TITLES: Record<string, string> = { Screens: "Screens & routing", Outputs: "Outputs", Engines: "Engines", Projects: "Projects & account", Card: "Card details", Cues: "Cue list", Media: "Media tools" };
 
 export default function App() {
   const { doc, state, health, error, load, connect, loadHub, mode, setMode, drawer, setDrawer } = useStore();
@@ -63,7 +64,7 @@ export default function App() {
         {error && <div className="panel errbar">{error} <button onClick={() => useStore.setState({ error: null })}>dismiss</button></div>}
         {doc && <Board />}
         {drawer && <div className="drawer"><div className="drawer-head"><b>{TITLES[drawer] ?? drawer}</b><button onClick={() => setDrawer(null)}>Done · Esc</button></div><div className="drawer-body">
-          {drawer === "Projects" && <Hub />}{drawer === "Card" && doc && <Review />}{drawer === "Screens" && doc && <Screens />}{drawer === "Cues" && doc && <Cues />}{drawer === "Media" && doc && <Media />}{drawer === "Engines" && <Engines />}
+          {drawer === "Projects" && <Hub />}{drawer === "Card" && doc && <Review />}{drawer === "Screens" && doc && <Screens />}{drawer === "Outputs" && doc && <Outputs />}{drawer === "Cues" && doc && <Cues />}{drawer === "Media" && doc && <Media />}{drawer === "Engines" && <Engines />}
         </div></div>}
       </main>
       <footer className="status">

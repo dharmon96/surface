@@ -32,7 +32,7 @@ import { planTranscodes } from "../core/intake/transcode.js";
 import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
 import { ocrAvailable, ocrFile, type OcrResult } from "../core/intake/ocr.js";
 import { toShowCall, fromShowCall } from "../core/integrations/showcall.js";
-import { fromPixelMapper, contentGuideRows, autoRouting, autoVenue, screensFromMapFiles } from "../core/integrations/pixelmapper.js";
+import { fromPixelMapper, contentGuideRows, autoRouting, autoVenue, autoOutputs, screensFromMapFiles } from "../core/integrations/pixelmapper.js";
 import { copyFileSync, mkdirSync as mkdirSync2 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { buildBundle } from "../core/index.js";
@@ -40,7 +40,7 @@ import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter, CompanionAdapter } from "../core/engine/adapters.js";
 import type { EngineAdapter } from "../core/engine/adapter.js";
-import type { ShowDoc } from "../core/types.js";
+import type { ShowDoc, OutputCanvas } from "../core/types.js";
 import { parseSheet } from "../core/parse/index.js";
 import { HubClient, HUB_URL } from "../core/hub/client.js";
 import { ProjectStore, blankShowDoc, type HubState } from "./projects.js";
@@ -105,6 +105,8 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   runner.on((e) => io.emit(e.type, e));
 
   const proxies = new ProxyStore(join(cfg.dataDir ?? tmpdir(), "surface-proxies"));
+  /** the show's audio standard (default: level-match to −18 LUFS, peaks under −1 dBTP) */
+  const levelMatchOpts = () => (doc.audio?.levelMatch ?? true) ? { targetLufs: doc.audio?.targetLufs ?? -18, ceilingDbTp: doc.audio?.ceilingDbTp ?? -1 } : false as const;
   /** Where this project's converted media lives: set by the first Prepare, else beside the project file. */
   const mediaRootOf = () => doc.mediaRoot ?? lastIntake?.mediaDir ?? join(dirname(showFile), "media");
   /** After a conversion run: remember slot → file so every cue (and every engine build) points at the converted media. */
@@ -201,7 +203,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (!lastIntake) return res.status(400).json({ error: "run intake first" }); if (transcodeRun.running) return res.status(409).json({ error: "already running" });
     transcodeRun = { running: true, started: new Date().toISOString(), events: [] }; res.json({ ok: true, jobs: lastIntake.jobs.length });
     const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
-    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); absorbManifest(lastIntake.mediaDir); }
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress, levelMatch: levelMatchOpts() }); absorbManifest(lastIntake.mediaDir); }
     catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
   // ── the board's one button: intake with everything inferred, then convert; originals deleted only if asked (after verify)
@@ -213,7 +215,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (q.body?.convert === false || !lastIntake.jobs.length) { io.emit("prepare", { phase: "done" }); return; }
     transcodeRun = { running: true, started: new Date().toISOString(), events: [] };
     const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
-    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); absorbManifest(lastIntake.mediaDir); }
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress, levelMatch: levelMatchOpts() }); absorbManifest(lastIntake.mediaDir); }
     catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("prepare", { phase: "done" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
   // ── the Card Board itself, the promoter request, thumbnails
@@ -243,7 +245,8 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   });
   // ── the venue view: screens in metres (PixelGrid 3D/2D positions, else an automatic layout) + what each surface is showing, as media URLs
   app.get("/api/media", (q, res) => { const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end(); res.set("Cache-Control", "private, max-age=3600").sendFile(f, { acceptRanges: true }); });
-  app.get("/api/venue", (_q, res) => {
+  /** every screen with what it is showing right now (BASE/OVERLAY/FULL as preview URLs) — the venue mirror and the outputs share it */
+  const liveScreens = () => {
     const screens = autoVenue(doc.screens, doc.surfaces); const root = mediaRootOf();
     const url = (slot: string | null) => { const rel = slot ? doc.media?.[slot] : undefined; if (!rel || !existsSync(join(root, rel))) return null; const abs = join(root, rel); const p = proxies.pathFor(abs); if (!p.ready) void proxies.build(abs); return p.still ? `/api/media?f=${encodeURIComponent(abs)}` : p.ready ? `/api/proxy?f=${encodeURIComponent(abs)}` : `building:/api/proxy?f=${encodeURIComponent(abs)}`; };
     const st = runner.getState();
@@ -252,7 +255,19 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     const out = screens.map((sc) => { const sf = doc.surfaces.find((x) => x.screens.includes(sc.id)); const ss = sf ? st.surfaces[sf.id] : undefined;
       const L = (k: "BASE" | "OVERLAY" | "FULL") => { const slot = forScreen(ss?.[k].slot ?? null, sc, sf); return { slot, url: url(slot) }; };
       return { id: sc.id, name: sc.name, w: sc.w, h: sc.h, venue: sc.venue, surface: sf?.id ?? null, independent: !!sf?.independent, testPattern: sc.testPattern ? `/api/media?f=${encodeURIComponent(join(root, sc.testPattern))}` : null, layers: { BASE: L("BASE"), OVERLAY: L("OVERLAY"), FULL: L("FULL") } }; });
-    res.json({ screens: out, current: st.current, bout: st.bout, round: st.round });
+    return { screens: out, current: st.current, bout: st.bout, round: st.round };
+  };
+  app.get("/api/venue", (_q, res) => res.json(liveScreens()));
+  // ── outputs: the canvases the LED processors take (PixelGrid canvases or one per screen), each assignable to a display
+  app.get("/api/outputs", (_q, res) => res.json({ outputs: doc.outputs ?? autoOutputs(doc.screens), auto: !doc.outputs?.length }));
+  app.put("/api/outputs", (q, res) => { const outputs: OutputCanvas[] = q.body?.outputs; if (!Array.isArray(outputs)) return res.status(400).json({ error: "outputs[] required" }); setShow({ ...doc, outputs }); res.json({ ok: true }); });
+  /** poke the output windows: identify overlay on/off, test patterns when idle on/off (all outputs, or one by id) */
+  app.post("/api/outputs/signal", (q, res) => { io.emit("output", { identify: q.body?.identify, test: q.body?.test, id: q.body?.id }); res.json({ ok: true }); });
+  /** what one output window renders: the canvas, its screens at canvas positions, and their live layers */
+  app.get("/api/outputs/:id", (q, res) => {
+    const o = (doc.outputs ?? autoOutputs(doc.screens)).find((x) => x.id === q.params.id); if (!o) return res.status(404).json({ error: "no such output" });
+    const live = liveScreens(); const screens = o.screens.map((p) => { const s = live.screens.find((x) => x.id === p.id); return s ? { ...s, x: p.x, y: p.y, cw: p.w ?? s.w, ch: p.h ?? s.h, rotation: p.rotation ?? 0 } : null; }).filter(Boolean);
+    res.json({ ...o, screens, current: live.current });
   });
   // ── a newer sheet dropped on the open project: merge (fighter ids stay, graphics follow the fighter), keep the diff
   app.post("/api/sheet", (q, res) => {
@@ -274,10 +289,14 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (typeof src === "string") copyFileSync(src, join(root, rel)); else writeFileSync(join(root, rel), src);
     media[`EVT_TEST_${screen.id}_${screen.w}x${screen.h}`] = rel; return rel;
   };
-  const applyScreens = (screens: ShowDoc["screens"], surfaces: ShowDoc["surfaces"], screenWords: Record<string, string[]>, media: Record<string, string>, note: string) => {
+  const applyScreens = (screens: ShowDoc["screens"], surfaces: ShowDoc["surfaces"], screenWords: Record<string, string[]>, media: Record<string, string>, note: string, outputs?: OutputCanvas[]) => {
     const routing = placeholders() || !Object.keys(doc.routing).length ? autoRouting(screens, surfaces) : doc.routing;
     const flags = doc.review.flags.filter((f) => !/placeholder/i.test(f));
-    setShow({ ...doc, screens, surfaces, routing, media: { ...(doc.media ?? {}), ...media }, mediaRoot: mediaRootOf(), review: { ...doc.review, flags: [...flags, note] } } as ShowDoc & { screenWords: any });
+    // outputs = the canvases the LED processors take (PixelGrid canvases when we have them, else one canvas per screen);
+    // keep display assignments the operator already made for canvases of the same id
+    const fresh = outputs?.length ? outputs : autoOutputs(screens); const prev = new Map((doc.outputs ?? []).map((o) => [o.id, o]));
+    const merged = fresh.map((o) => { const p = prev.get(o.id); return p ? { ...o, display: p.display, fit: p.fit ?? o.fit } : o; });
+    setShow({ ...doc, screens, surfaces, routing, outputs: merged, media: { ...(doc.media ?? {}), ...media }, mediaRoot: mediaRootOf(), review: { ...doc.review, flags: [...flags, note] } } as ShowDoc & { screenWords: any });
     (doc as any).screenWords = { ...((doc as any).screenWords ?? {}), ...screenWords }; persist();
   };
   app.post("/api/import/screenmaps", async (q, res) => {
@@ -315,7 +334,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
             const sc = r.screens.find((s) => pmIds.includes(s.pixelMapper?.screenId ?? "")) ?? (m ? r.screens.find((s) => s.w === Number(m[1]) && s.h === Number(m[2]) && !s.testPattern) : undefined); if (!sc) continue;
             try { sc.testPattern = adoptTestPattern(sc, await hub.fetchFile(f.url), media); patterns++; } catch {} } }
       } catch {}
-      applyScreens(r.screens, r.surfaces, r.screenWords, media, `Screens loaded from PixelGrid project '${proj.value?.metadata?.name ?? id}'${r.flags.length ? ` — ${r.flags.join("; ")}` : ""}`);
+      applyScreens(r.screens, r.surfaces, r.screenWords, media, `Screens loaded from PixelGrid project '${proj.value?.metadata?.name ?? id}'${r.flags.length ? ` — ${r.flags.join("; ")}` : ""}`, r.outputs);
       res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, patterns, flags: r.flags });
     } catch (e: any) { res.status(502).json({ error: e.message }); }
   });

@@ -8,7 +8,8 @@
     "declaration": false
   },
   "include": [
-    "server",
-    "core"
+    "core",
+    "player",
+    "server"
   ]
 }

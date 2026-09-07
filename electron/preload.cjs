@@ -9,4 +9,9 @@ contextBridge.exposeInMainWorld("surface", {
   hubSignIn: () => ipcRenderer.invoke("hub-signin"),
   hubSignOut: () => ipcRenderer.invoke("hub-signout"),
   openHub: () => ipcRenderer.invoke("open-hub"),
+  listDisplays: () => ipcRenderer.invoke("list-displays"),
+  openOutput: (o) => ipcRenderer.invoke("open-output", o),
+  closeOutput: (id) => ipcRenderer.invoke("close-output", id),
+  openOutputs: () => ipcRenderer.invoke("open-outputs"),
+  onDisplaysChanged: (fn) => { ipcRenderer.on("displays-changed", (_e, d) => fn(d)); },
 });

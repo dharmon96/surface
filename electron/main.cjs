@@ -4,7 +4,7 @@
  *   prod: `npm run app`      → serves dist/ from the server itself
  * Show file and config are picked from the user data dir (%APPDATA%/Surface) with sensible first-run defaults.
  */
-const { app, BrowserWindow, dialog, Menu, shell, ipcMain, session } = require("electron");
+const { app, BrowserWindow, dialog, Menu, shell, ipcMain, session, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { spawn, execFileSync } = require("node:child_process");
@@ -14,6 +14,10 @@ const DEV = process.env.SURFACE_DEV === "1";
 const PORT = Number(process.env.SURFACE_PORT || 8090);
 const userDir = () => app.getPath("userData");
 let serverProc = null;
+// outputs are pixel-exact: no DPI scaling on any display, no frame-rate throttling when an output window is hidden behind another
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-background-timer-throttling");
 
 function ensureDefaults() {
   const d = userDir(); fs.mkdirSync(d, { recursive: true });
@@ -78,6 +82,29 @@ ipcMain.handle("hub-signin", async (ev) => {
 });
 ipcMain.handle("hub-signout", async () => { for (const name of COOKIE_NAMES) await session.defaultSession.cookies.remove(HUB, name).catch(() => {}); const r = await fetch(`http://127.0.0.1:${PORT}/api/hub/signout`, { method: "POST" }); return r.json().catch(() => null); });
 ipcMain.handle("open-hub", () => shell.openExternal(`${HUB}/apps`));
+
+// ── outputs: one frameless kiosk window per output canvas on the display the operator picked (the LED processor's input).
+// The window is the canvas at 1:1 (or fitted per the canvas' fit rule); the page /output.html renders the screens at their
+// canvas positions from the server's live state. Same idea as Resolume's Advanced Output, without the mapping step:
+// PixelGrid already knows where every screen sits in each processor canvas.
+const outputWins = new Map();
+const displays = () => screen.getAllDisplays().map((d, i) => ({ id: d.id, label: d.label || `Display ${i + 1}`, x: d.bounds.x, y: d.bounds.y, w: d.bounds.width, h: d.bounds.height, scale: d.scaleFactor, primary: d.id === screen.getPrimaryDisplay().id }));
+ipcMain.handle("list-displays", () => displays());
+ipcMain.handle("open-output", (_ev, { id, displayId, w, h }) => {
+  const d = screen.getAllDisplays().find((x) => x.id === displayId) ?? screen.getPrimaryDisplay(); if (!d) return { error: "no display" };
+  if (outputWins.has(id)) { outputWins.get(id).close(); }
+  const win = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, fullscreen: true, kiosk: true, alwaysOnTop: false, skipTaskbar: true, backgroundColor: "#000000", title: `Surface output — ${id}`, webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+  win.setMenuBarVisibility(false);
+  win.loadURL(`${DEV ? "http://localhost:3009" : `http://127.0.0.1:${PORT}`}/output.html?id=${encodeURIComponent(id)}&w=${w}&h=${h}`);
+  win.on("closed", () => outputWins.delete(id)); outputWins.set(id, win);
+  return { ok: true, display: { id: d.id, w: d.bounds.width, h: d.bounds.height } };
+});
+ipcMain.handle("close-output", (_ev, id) => { const w = outputWins.get(id); if (w) w.close(); return { ok: true }; });
+ipcMain.handle("open-outputs", () => [...outputWins.keys()]);
+screen.on("display-removed", () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); });
+screen.on("display-added", () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); });
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => { serverProc?.kill(); app.quit(); });
+// closing the console closes every output with it
+app.on("browser-window-closed", () => { const main = BrowserWindow.getAllWindows().find((w) => !w.isKiosk()); if (!main) for (const w of outputWins.values()) if (!w.isDestroyed()) w.close(); });
 app.on("before-quit", () => serverProc?.kill());

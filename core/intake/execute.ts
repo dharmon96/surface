@@ -5,6 +5,7 @@
  * Encoder fallbacks are checked once at start (`ffmpeg -encoders`): no `dxv` → HAP Q (Resolume plays HAP natively);
  * no `hap` → H.264. The fallback is recorded in the manifest so the pre-show report is honest about what was produced.
  */
+import { measureLoudness, levelMatch, type LevelMatch } from "./loudness.js";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
@@ -14,9 +15,11 @@ import type { TranscodeJob } from "./transcode.js";
 import { probe } from "./intake.js";
 
 const run = promisify(execFile);
-export interface ExecOpts { ffmpeg?: string; concurrency?: number; deleteOriginals?: boolean; srcRoot: string; onProgress?: (e: ExecEvent) => void; dryRun?: boolean }
-export type ExecEvent = { job: string; phase: "start" | "encode" | "verify" | "done" | "skipped" | "failed" | "deleted"; detail?: string; pct?: number };
-export interface ManifestEntry { slot: string; src: string; srcHash: string; outputs: string[]; codec: string; action: string; verifiedAt: string; fallback?: string; durationSec?: number; notes: string[] }
+export interface ExecOpts { ffmpeg?: string; concurrency?: number; deleteOriginals?: boolean; srcRoot: string; onProgress?: (e: ExecEvent) => void; dryRun?: boolean;
+  /** level-match clips that keep their audio: one static gain per clip to reach targetLufs (true peak capped at ceilingDbTp) — baked into the converted file */
+  levelMatch?: { targetLufs: number; ceilingDbTp?: number } | false }
+export type ExecEvent = { job: string; phase: "start" | "measure" | "encode" | "verify" | "done" | "skipped" | "failed" | "deleted"; detail?: string; pct?: number };
+export interface ManifestEntry { slot: string; src: string; srcHash: string; outputs: string[]; codec: string; action: string; verifiedAt: string; fallback?: string; durationSec?: number; notes: string[]; audio?: LevelMatch }
 
 export async function availableEncoders(ffmpeg = "ffmpeg"): Promise<Set<string>> {
   try { const { stdout } = await run(ffmpeg, ["-hide_banner", "-encoders"]); return new Set([...stdout.matchAll(/^\s*[VASFXBD.]{6}\s+(\S+)/gm)].map((m) => m[1])); } catch { return new Set(); }
@@ -62,8 +65,12 @@ export async function executeTranscodes(jobs: TranscodeJob[], opts: ExecOpts): P
       if (opts.dryRun) { emit({ job: j.slot, phase: "done", detail: "dry run" }); continue; }
       try {
         const srcProbe = await probe(src); const outputs: string[] = [];
+        // level matching: measure once per source, then bake the gain into every output that keeps the audio
+        let audio: LevelMatch | undefined; const lm = opts.levelMatch; const notes = [...j.notes];
+        if (lm && j.keepAudio && !opts.dryRun) { emit({ job: j.slot, phase: "measure", detail: "measuring loudness" }); const m = await measureLoudness(src, ffmpeg); if (m) { audio = levelMatch(m, lm.targetLufs, lm.ceilingDbTp ?? -1); if (Math.abs(audio.gainDb) >= 0.5) notes.push(`level-matched ${audio.gainDb > 0 ? "+" : ""}${audio.gainDb} dB (was ${audio.integratedLufs} LUFS → ${lm.targetLufs})${audio.capped ? " — held back by the peak ceiling" : ""}`); } }
         for (let k = 0; k < j.args.length; k++) {
           let args = j.args[k].map((a) => (a === j.src ? src : a)); const out = args[args.length - 1]; const tmp = out.replace(/(\.[a-z0-9]+)$/i, ".part$1");
+          if (audio && Math.abs(audio.gainDb) >= 0.5) { const ci = args.indexOf("-c"); if (ci >= 0 && args[ci + 1] === "copy") { args.splice(ci, 2, "-c:v", "copy"); } args.splice(args.length - 1, 0, "-af", `volume=${audio.gainDb}dB`, "-c:a", "aac", "-b:a", "256k"); } // a gain means the audio is re-encoded; video stays as planned
           if (fallback?.startsWith("dxv")) args = rewriteEncoder(args, "dxv", fallback.endsWith("hap") ? "hap" : "libx264"); if (fallback === "hap→h264") args = rewriteEncoder(args, "hap", "libx264");
           args[args.length - 1] = tmp; mkdirSync(dirname(out), { recursive: true });
           emit({ job: j.slot, phase: "encode", detail: out, pct: 0 });
@@ -72,7 +79,7 @@ export async function executeTranscodes(jobs: TranscodeJob[], opts: ExecOpts): P
           const v = await verify(tmp, srcProbe.durationSec, srcProbe.still); if (!v.ok) { try { unlinkSync(tmp); } catch {} throw new Error(`verify failed for ${out}: ${v.why}`); }
           renameSync(tmp, out); outputs.push(out);
         }
-        const entry: ManifestEntry = { slot: j.slot, src: j.src, srcHash: hash, outputs, codec: fallback ? fallback.split("→")[1] : j.codec, action: j.action, verifiedAt: new Date().toISOString(), fallback, durationSec: srcProbe.durationSec, notes: j.notes };
+        const entry: ManifestEntry = { slot: j.slot, src: j.src, srcHash: hash, outputs, codec: fallback ? fallback.split("→")[1] : j.codec, action: j.action, verifiedAt: new Date().toISOString(), fallback, durationSec: srcProbe.durationSec, notes, audio };
         const idx = manifest.findIndex((m) => m.slot === j.slot); if (idx >= 0) manifest[idx] = entry; else manifest.push(entry);
         writeFileSync(manPath, JSON.stringify(manifest, null, 1));
         emit({ job: j.slot, phase: "done", detail: outputs.join(", ") });

@@ -13,9 +13,10 @@
     "noEmit": true
   },
   "include": [
-    "core",
     "cli",
-    "tests",
-    "server"
+    "core",
+    "player",
+    "server",
+    "tests"
   ]
 }
