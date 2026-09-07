@@ -23,24 +23,23 @@ works locally.
 ## Listing Surface on mantaglow.com — add to `web/scripts/seed-apps.ts` (APPS array)
 
 ```ts
-{
-  slug: "surface",
-  name: "Surface",
-  description: "Show-control console for live-event graphics: bout sheet in, Resolume / disguise / Companion out — or run the cues itself.",
-  subdomain: "surface",            // hub page + downloads; the app itself is desktop-only
-  tier: "pro",                     // match ShowCall's tier
-  iconName: "MonitorPlay",
-  sortOrder: 40,
-  hasOffline: true,                // ← the download/offline flag the hub already supports
-  primaryCategory: "show-control",
-  categories: ["show-control", "video", "graphics"],
-  phase: "beta",
-},
+  {
+    slug: "surface",
+    name: "Surface",
+    description: "Show-control console for live-event graphics — bout sheet in, Resolume / disguise / Companion out, or run the cues itself. Desktop app, works offline.",
+    subdomain: "surface.mantaglow.com",
+    tier: "ai",                      // same tier as ShowCall
+    iconName: "MonitorPlay",
+    sortOrder: "8",
+    hasOffline: true,                // the download/offline flag the hub already supports
+    primaryCategory: "live_events",
+    categories: ["live_events"],
+    phase: "show",
+  },
 ```
 
-Check the neighbouring entries in that file for the exact enum values of `tier`, `primaryCategory` and `phase` before
-seeding (`npx tsx scripts/seed-apps.ts`). Grant access with the same admin flow as the other apps (`userAppAccess` with
-`offlineAccess: true` for the download).
+(Entry already added to the file on 7 Sep 2026.) Seed it with `npm run db:seed-apps` in `web/` — the script upserts, so the
+other apps are untouched. Then grant access the same way as the other apps (`userAppAccess` with `offlineAccess: true`).
 
 ## Downloads
 
