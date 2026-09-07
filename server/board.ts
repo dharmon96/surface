@@ -47,9 +47,10 @@ export function buildBoard(i: BoardInputs): Board {
     const out = new Map<string, BoardSlot>();
     for (const c of cs) for (const t of c.targets) for (const a of t.actions) if (a.op === "show" && !out.has(a.media.slot)) {
       const slot = a.media.slot; const sc = doc.screens.find((s) => slot.includes(`_${s.id}_`)) ?? screenOf(t.surface);
-      const v = verified.get(slot), as = assigned.get(slot), job = jobs.get(slot);
+      const v = verified.get(slot), as = assigned.get(slot), job = jobs.get(slot); const known = doc.media?.[slot] && i.mediaDir ? join(i.mediaDir, doc.media[slot]) : null;
       let s: BoardSlot;
-      if (v) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? v.src, out: v.outputs[0], thumb: i.thumbUrl(v.outputs[0]), note: v.fallback ? `encoded as ${v.codec} (${v.fallback})` : undefined, confidence: as?.confidence };
+      if (known && existsSync(known)) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? doc.media![slot], out: known, thumb: i.thumbUrl(known), note: v?.fallback ? `encoded as ${v.codec} (${v.fallback})` : undefined, confidence: as?.confidence };
+      else if (v) s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "ready", file: as?.file ?? v.src, out: v.outputs[0], thumb: i.thumbUrl(v.outputs[0]), note: v.fallback ? `encoded as ${v.codec} (${v.fallback})` : undefined, confidence: as?.confidence };
       else if (as) { const needs = job ? job.action !== "copy" : false; s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: needs ? "convert" : "ready", file: as.file, thumb: i.intake ? i.thumbUrl(join(i.intake.dir, as.file)) : undefined, note: [...(job?.notes ?? []), ...as.issues].join("; ") || undefined, confidence: as.confidence }; }
       else s = { slot, screen: sc.id, w: sc.w, h: sc.h, status: "missing" };
       out.set(slot, s);
@@ -67,6 +68,7 @@ export function buildBoard(i: BoardInputs): Board {
   const flags = evt.filter((c) => c.id.startsWith("EVT.FLAG_")); if (flags.length) ev.FLAGS = cell("FLAGS", `Anthem flags ×${flags.length}`, flags);
   const vts = cues.filter((c) => /^VT\./.test(c.id) || c.group === "VT"); if (vts.length) ev.VTS = cell("VTS", `VT ×${vts.length}`, vts);
   const first = evt.find((c) => c.id.startsWith("EVT.UP_NEXT_")); if (first) ev.UP_NEXT = cell("UP_NEXT", "Up next (pre-show)", [first]);
+  const test = evt.find((c) => c.id === "EVT.TEST"); if (test) ev.TEST = cell("TEST", "Test patterns", [test]);
   rows.push({ id: "EVT", kind: "event", order: 0, title: "Holds · flags · VTs", meta: {}, flags: [], cells: ev });
   // bouts
   const bouts = [...(doc.data.bouts ?? [])].sort((a: any, b: any) => a.order - b.order);
@@ -86,7 +88,7 @@ export function buildBoard(i: BoardInputs): Board {
 
   // per-screen coverage, missing list, totals
   const all: { row: BoardRow; label: string; slots: BoardSlot[] }[] = [];
-  for (const r of rows) { for (const c of Object.values(r.cells)) all.push({ row: r, label: c.label, slots: c.slots }); if (r.rounds) { const rs = r.rounds.flatMap((x) => x.slots); if (rs.length) all.push({ row: r, label: `Rounds 1–${r.rounds.length}`, slots: rs }); } }
+  for (const r of rows) { for (const c of Object.values(r.cells)) { if (c.key === "TEST") continue; /* test patterns are ours, not the promoter's */ all.push({ row: r, label: c.label, slots: c.slots }); } if (r.rounds) { const rs = r.rounds.flatMap((x) => x.slots); if (rs.length) all.push({ row: r, label: `Rounds 1–${r.rounds.length}`, slots: rs }); } }
   const screens = doc.screens.map((s) => { const mine = all.flatMap((x) => x.slots).filter((x) => x.screen === s.id); return { id: s.id, name: s.name, w: s.w, h: s.h, ready: mine.filter((x) => x.status === "ready").length, total: mine.length }; });
   const missing: Board["missing"] = [];
   for (const x of all) { const m = x.slots.filter((s) => s.status === "missing"); if (m.length) missing.push({ row: x.row.id, label: x.label, screens: [...new Set(m.map((s) => s.screen))], kind: "missing" }); const cv = x.slots.filter((s) => s.status === "convert" && /letterbox|scale|tile/i.test(s.note ?? "")); if (cv.length && !m.length) missing.push({ row: x.row.id, label: `${x.label} — ${cv[0].note}`, screens: [...new Set(cv.map((s) => s.screen))], kind: "convert" }); }

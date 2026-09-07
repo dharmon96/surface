@@ -31,3 +31,20 @@ describe("composition layouts", () => {
     const page = companionPage(doc, cues, "B08", 9, { mode: "direct" }); expect(JSON.stringify(page)).not.toMatch(/connectLayerGroupColumn/);
   });
 });
+
+describe("screen detection from shape", () => {
+  it("accepts a bigger render of the same aspect, and one file serves identical screens", async () => {
+    const { screenFromEvidence, tokenise } = await import("../core/intake/tokens.js");
+    const syn = { MAIN: { words: ["main"], w: 3840, h: 1080 }, IMAG_L: { words: ["imag left"], w: 1920, h: 1080 }, IMAG_R: { words: ["imag right"], w: 1920, h: 1080 }, RIBBON: { words: ["ribbon"], w: 7680, h: 216 } };
+    const ev = (w: number, h: number, name = "x/1A_Walkout.mp4") => tokenise(name, { file: name, w, h, durationSec: 5, fps: 30, still: false, codec: "h264", pix: "yuv420p", audio: false } as any);
+    expect(screenFromEvidence(ev(7680, 2160), syn)).toMatchObject({ by: "aspect", all: ["MAIN"] });          // 4K render of the 32:9 wall
+    expect(screenFromEvidence(ev(3840, 2160), syn)).toMatchObject({ by: "aspect", all: ["IMAG_L", "IMAG_R"] }); // UHD 16:9 → both IMAGs
+    expect(screenFromEvidence(ev(1920, 1080), syn)).toMatchObject({ by: "res", all: ["IMAG_L", "IMAG_R"] });
+    expect(screenFromEvidence(ev(1000, 1000), syn).surface).toBeNull();
+  });
+  it("the screen-map file names become screens, common project prefix stripped, layout render preferred", async () => {
+    const { screensFromMapFiles } = await import("../core/index.js");
+    const r = screensFromMapFiles([{ name: "Glendale_Main_LED_layout_3840x1080.png", w: 3840, h: 1080 }, { name: "Glendale_Main_LED_wiring-diagram_3840x1080.png", w: 3840, h: 1080 }, { name: "Glendale_Ringside_Ribbon_layout_7680x216.png", w: 7680, h: 216 }, { name: "random.png", w: 1920, h: 1080 }]);
+    expect(r.project).toBe("Glendale"); expect(r.screens.map((s) => s.id)).toEqual(["MAIN_LED", "RINGSIDE_RIBBON", "RANDOM"]); expect(r.screens[0].file).toMatch(/_layout_/);
+  });
+});

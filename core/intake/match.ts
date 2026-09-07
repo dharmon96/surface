@@ -71,7 +71,7 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
     // candidate slots
     const cands = parsed.filter(({ p }) => {
       if (!graphic || p!.graphic !== graphic) return false;
-      if (!scr.surface || p!.screen !== scr.surface) return false;   // never guess a screen: pixels or a known screen word must say which
+      if (!scr.surface || !(scr.all ?? [scr.surface]).includes(p!.screen)) return false;   // never guess a screen: pixels, aspect or a known screen word must say which
       if (graphic === "ROUND" && !bout) return ev.round !== undefined && p!.variant === String(ev.round).padStart(2, "0"); // generic round card set shared by every bout
       if (graphic === "HOLD" || graphic === "FLAG" || graphic === "VT") return p!.group === "EVT" || (bout && p!.group === bout.id);
       if (!bout) return false;
@@ -84,12 +84,14 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
     });
     if (graphic === "HOLD" && cands.length > 1) { const pick = ev.names.some((n) => /sponsor|logo/.test(n)) ? "SPONSOR" : ev.names.some((n) => /co\s?main|comain/.test(n)) ? "COMAIN" : "MAIN"; const c2 = cands.filter((c) => c.p!.variant === pick); if (c2.length) { cands.length = 0; cands.push(...c2); reasons.push(`hold variant ${pick}`); } }
     if (!cands.length) { result.unmatched.push({ file: ev.file, evidence: ev, why: !graphic ? "graphic type not recognised" : !scr.surface && scr.candidates.length !== 1 ? `screen ambiguous (${scr.candidates.join(", ") || "none"}) at ${ev.probe?.w}x${ev.probe?.h}` : !bout && graphic !== "HOLD" && graphic !== "VT" && graphic !== "FLAG" ? "bout could not be determined" : "no slot for this combination", candidates: scr.candidates }); continue; }
-    let conf = 0.3 + 0.3 * strength; if (scr.by === "both") conf += 0.25; else if (scr.by === "res") conf += 0.2; else if (scr.by === "word") conf += 0.1;
+    let conf = 0.3 + 0.3 * strength; if (scr.by === "both") conf += 0.25; else if (scr.by === "res") conf += 0.2; else if (scr.by === "word") conf += 0.1; else if (scr.by === "aspect") { conf += 0.05; reasons.push(`same shape as ${(scr.all ?? []).join(", ")} (${ev.probe?.w}x${ev.probe?.h})`); }
     if (ev.probe && cands[0].s.w === ev.probe.w && cands[0].s.h === ev.probe.h) conf += 0.1; else if (ev.probe) { conf -= 0.1; issues.push(`file is ${ev.probe.w}x${ev.probe.h}, slot wants ${cands[0].s.w}x${cands[0].s.h} — will scale`); }
     if (issues.some((i) => /sheet wins|folder/.test(i))) conf -= 0.15;
     conf = Math.max(0, Math.min(1, conf));
     const shared = graphic === "ROUND" && !bout; if (shared) reasons.push(`shared round card → ${cands.length} bouts`);
-    for (const c of shared ? cands : cands.slice(0, 1)) { // one file fills one slot, except event-wide round cards which fill every bout's slot
+    // one file fills one slot per screen it fits (a 1920x1080 walkout fills IMAG L and R), except event-wide round cards which fill every bout's slot
+    const firstPerScreen = [...new Map(cands.map((c) => [c.p!.screen, c])).values()];
+    for (const c of shared ? cands : firstPerScreen) {
       const a: Assignment = { slot: c.s.slot, file: ev.file, confidence: conf, reasons, issues, update: ev.update };
       const cur = best.get(a.slot);
       if (!cur || (a.update && !cur.update) || (a.update === cur.update && a.confidence > cur.confidence)) { if (cur) result.issues.push(`${a.slot}: '${cur.file}' replaced by '${a.file}' (${a.update ? "update folder" : "higher confidence"})`); best.set(a.slot, a); }

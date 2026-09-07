@@ -14,6 +14,8 @@ export interface Screen {
   name: string;
   w: number;
   h: number;
+  /** the screen's test pattern / line-up image (PixelGrid native export), relative to doc.mediaRoot */
+  testPattern?: string;
   /** Optional link back to PixelMapper (Screen.id / canvasId) */
   pixelMapper?: { screenId?: string; canvasId?: string };
 }
@@ -102,8 +104,11 @@ export interface ShowDoc {
   /** default transition per graphic type, e.g. { WINNER: "stinger:whoosh", UP_NEXT: "stinger:whoosh" } */
   transitions?: Record<string, string>;
   review: { status: "draft" | "approved"; flags: string[] };
-  /** how the engine composition is laid out — see core/engine/layout.ts */
+  /** how the engine composition is laid out — see core/engine/adapter.ts */
   build?: { resolumeLayout?: ResolumeLayout; disguiseLayout?: ResolumeLayout };
+  /** where converted media lives (absolute); slot → file relative to it, filled by transcode / test-pattern import */
+  mediaRoot?: string;
+  media?: Record<string, string>;
 }
 
 /**

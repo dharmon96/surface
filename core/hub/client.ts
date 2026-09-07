@@ -28,6 +28,11 @@ export class HubClient {
   async get<T = unknown>(key: string): Promise<{ key: string; value: T; updated_at: string } | null> { const r = await this.fetchImpl(`${this.base}/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { headers: { "x-hub-session-token": this.token ?? "" } }); if (r.status === 404) return null; if (!r.ok) throw new Error(`GET ${key} → ${r.status}`); return r.json(); }
   async put(key: string, value: unknown): Promise<void> { await this.req(`/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify(value) }); }
   async delete(key: string): Promise<void> { await this.req(`/api/data/${APP_SLUG}/${encodeURIComponent(key)}`, { method: "DELETE" }); }
+  // ── other MantaGlow apps' data (read-only): PixelGrid projects and renders live under app slug "pixel"
+  async listApp(slug: string): Promise<HubListItem[]> { return (await this.req(`/api/data/${slug}`)).json(); }
+  async getApp<T = unknown>(slug: string, key: string): Promise<{ key: string; value: T; updated_at: string } | null> { const r = await this.fetchImpl(`${this.base}/api/data/${slug}/${encodeURIComponent(key)}`, { headers: { "x-hub-session-token": this.token ?? "" } }); if (r.status === 404) return null; if (!r.ok) throw new Error(`GET ${slug}/${key} → ${r.status}`); return r.json(); }
+  /** a file the hub stores for an app (media API); absolute or hub-relative URL */
+  async fetchFile(url: string): Promise<Buffer> { const r = await this.fetchImpl(url.startsWith("http") ? url : `${this.base}${url}`, { headers: { "x-hub-session-token": this.token ?? "" } }); if (!r.ok) throw new Error(`GET ${url} → ${r.status}`); return Buffer.from(await r.arrayBuffer()); }
 }
 
 /** Better Auth's cookie is `<token>.<signature>`; the hub's desktop fallback matches sessions.token, i.e. the part before the dot. */

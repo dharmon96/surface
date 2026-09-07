@@ -66,7 +66,9 @@ export function Board() {
   const busy = transcode.running || (prepare && prepare.phase !== "done" && prepare.phase !== "failed");
 
   const onDrop = async (e: React.DragEvent) => {
-    e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (!f) return;
+    e.preventDefault(); setDragging(false); const all = Array.from(e.dataTransfer.files); const f = all[0]; if (!f) return;
+    // a handful of PNGs = PixelGrid screen maps (one per screen): they become the screens and their test patterns
+    if (all.length && all.every((x) => /\.(png|jpe?g|webp)$/i.test(x.name))) { const paths = all.map(pathOf).filter(Boolean) as string[]; if (!paths.length) return say("Drag the PNGs from Explorer in the desktop app, or use Screens → Import screen maps"); say(await useStore.getState().importScreenMaps({ files: paths })); return; }
     if (/\.(pdf|txt)$/i.test(f.name)) { try { const text = /\.pdf$/i.test(f.name) ? (await desktop()?.readSheetPath?.(pathOf(f)))?.text : await f.text(); if (!text) return say("Could not read that sheet (PDFs need the desktop app)"); const diff = await dropSheet(text, f.name); say(diff.length ? `Sheet merged: ${diff.slice(0, 4).join(" · ")}${diff.length > 4 ? ` (+${diff.length - 4})` : ""}` : "Sheet merged — no changes"); } catch (err: any) { say(`Sheet failed: ${err.message}`); } return; }
     const p = pathOf(f); if (!p) return say("Drag the folder from Explorer in the desktop app, or paste its path");
     setDir(p); runPrepare(p, del);
@@ -99,6 +101,7 @@ export function Board() {
       {run && <div className="runbar">
         <div className="big">{liveRow ? `${liveRow} · ${board.rows.find((r) => r.id === liveRow)?.title ?? ""}` : "Pre-show"}<small>{liveRound ? `round ${liveRound}` : ""}{state?.current ? ` · cue ${state.current}` : ""}</small></div>
         <span>next: <b>{state?.next ?? "—"}</b></span><kbd>Space</kbd> GO · <kbd>Backspace</kbd> back · <kbd>Esc</kbd> panic
+        {board.rows[0]?.cells.TEST?.cues[0] && <button className="btn" onClick={() => go(board.rows[0].cells.TEST.cues[0].n)} title="Every screen's own test pattern — the line-up you can always go back to">Test patterns</button>}
         <button className="gobtn" onClick={() => useStore.getState().next()}>GO</button><button className="panic" onClick={() => useStore.getState().panic()}>PANIC</button>
       </div>}
 
@@ -109,7 +112,7 @@ export function Board() {
             <tbody>
               {board.rows.map((r) => r.kind === "event" ? (
                 <tr key={r.id} className="evt"><td className="bout"><span className="ord">EVENT</span><div className="names">{r.title}</div><div className="meta">{Object.keys(r.cells).length} items</div></td>
-                  <td colSpan={board.columns.length}><div className="stack">{Object.values(r.cells).map((c) => <Cell key={c.key} cell={c} row={r.id} screens={screens} tone={c.key === "FLAGS" ? "t-flag" : c.key === "VTS" ? "t-vt" : "t-hold"} onFire={go} />)}</div></td></tr>
+                  <td colSpan={board.columns.length}><div className="stack">{Object.values(r.cells).map((c) => <Cell key={c.key} cell={c} row={r.id} screens={screens} tone={c.key === "FLAGS" ? "t-flag" : c.key === "VTS" ? "t-vt" : c.key === "TEST" ? "t-test" : "t-hold"} onFire={go} />)}</div></td></tr>
               ) : (
                 <tr key={r.id} className={liveRow === r.id ? "live" : ""}>
                   <td className="bout"><span className="ord">{String(r.order).padStart(2, "0")}{r.meta.isMain ? " · MAIN" : r.meta.isCoMain ? " · CO-MAIN" : ""}</span>

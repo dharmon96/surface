@@ -182,3 +182,15 @@ h2, h3, h4 { text-wrap: balance; }
 .board .selpanel .slot .k { font-weight: 600; } .board .selpanel .slot.missing .k { color: var(--bad); } .board .selpanel .slot.convert .k { color: var(--warn); } .board .selpanel .slot .n { grid-column: 2; }
 .screens textarea { resize: vertical; } .screens .note { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--primary-soft); font-size: 13px; cursor: pointer; }
 .screens td input[type="number"] { text-align: right; } .screens table td { vertical-align: middle; }
+/* ── screen tiles (Screens drawer): a raster drawn at its real shape with its test pattern */
+.tile { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px; border-radius: 6px; border: 2px solid transparent; opacity: .45; transition: opacity .15s, border-color .15s; }
+.tile.click { cursor: pointer; } .tile.on { opacity: 1; border-color: var(--primary); } .tile:not(.click) { opacity: 1; }
+.tile .raster { background: var(--muted) center / cover no-repeat; border: 1px solid var(--border-strong); border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; color: var(--muted-fg); overflow: hidden; }
+.tile .cap { display: flex; gap: 6px; align-items: baseline; font-size: 10px; font-weight: 600; color: var(--muted-fg); max-width: 100%; } .tile .cap span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tile .cap b { font-weight: 600; }
+.tile.full .cap b { color: var(--ok); } .tile.part .cap b { color: var(--warn); } .tile.none .cap b { color: var(--bad); }
+.routes { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.route { display: grid; grid-template-columns: 180px 1fr; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+.route .rlabel { display: flex; flex-direction: column; gap: 2px; font-size: 13px; } .route .rlabel span { font-size: 11px; }
+.route .tiles { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.sgroup { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; } .sgroup.multi { background: var(--muted); } .sgroup.indep .tile .raster { border-style: dashed; }
+.board .t-test { background: repeating-linear-gradient(90deg, oklch(0.6 0.15 25) 0 12.5%, oklch(0.75 0.15 75) 0 25%, oklch(0.7 0.15 130) 0 37.5%, oklch(0.6 0.12 200) 0 50%, oklch(0.5 0.15 260) 0 62.5%, oklch(0.55 0.18 320) 0 75%, oklch(0.9 0.01 80) 0 87.5%, oklch(0.2 0.01 80) 0 100%); }

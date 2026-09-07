@@ -122,6 +122,9 @@ export const boxingFightNight: Pack = {
         add({ id: `${b.id}.HOLD`, name: "Hold (main-event matchup)", ...bt("walkOut"), ...t, trigger: "Break / VT block", d3: { tag: `${N}.99`, transports: t.scope } });
       }
     }
+    // ── line-up: every screen's own test pattern (PixelGrid export), independent surfaces included — the cue you can always go back to
+    { const all = doc.surfaces.map((s) => s.id); const t: SurfaceActions[] = all.map((surface) => ({ surface, actions: [{ layer: "FULL", op: "clear" }, { layer: "OVERLAY", op: "clear" }, ...media(doc, surface, "EVT", "TEST", null, LOOP, "TEST").map((m) => ({ layer: "BASE" as const, op: "show" as const, media: m }))] }));
+      add({ id: "EVT.TEST", group: "EVT", name: "Screen test patterns", origin: "pack", scope: all, targets: t, trigger: "Line-up / focus / any time you need to see the screens", d3: { tag: "0.99", transports: all } }); }
     return cues;
   },
 };

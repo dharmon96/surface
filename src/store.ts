@@ -23,6 +23,7 @@ interface S {
   hub: HubStatus | null; projects: ProjectsView | null; lastSync: SyncResult | null; hubBusy: string | null;
   drawer: string | null; setDrawer(d: string | null): void; selected: { row: string; cell: BoardCell } | null; select(sel: { row: string; cell: BoardCell } | null): void;
   board: Board | null; mode: "prepare" | "run"; prepare: { phase: string; detail?: string; dir?: string } | null; versions: { file: string; at: string; diff: string[] }[]; build: { engine: string; done: number; total: number } | null;
+  pixelgrid: { id: string; name: string; screens?: number; updatedAt: string }[] | null; loadPixelGrid(): Promise<void>; importPixelGrid(id: string): Promise<string>; importScreenMaps(o: { dir?: string; files?: string[] }): Promise<string>;
   loadBoard(): Promise<void>; setMode(m: "prepare" | "run"): void; runPrepare(dir: string, deleteOriginals: boolean): Promise<void>; dropSheet(text: string, file: string): Promise<string[]>; buildResolume(): Promise<string>; requestText(): Promise<string>;
   loadHub(refresh?: boolean): Promise<void>; signIn(): Promise<void>; signOut(): Promise<void>; syncProjects(): Promise<void>;
   createProject(p: { name: string; date?: string; venue?: string; pack?: string }): Promise<void>; importSheet(text: string, file: string): Promise<string[]>; openProject(id: string): Promise<void>; deleteProject(id: string, cloud: boolean): Promise<void>;
@@ -36,6 +37,10 @@ export const useStore = create<S>((set, get) => ({
   hub: null, projects: null, lastSync: null, hubBusy: null,
   drawer: null, setDrawer(d) { set({ drawer: d }); }, selected: null, select(sel) { set({ selected: sel }); },
   board: null, mode: (localStorage.getItem("surface.mode") as any) || "prepare", prepare: null, versions: [], build: null,
+  pixelgrid: null,
+  async loadPixelGrid() { try { set({ pixelgrid: await j("/api/hub/pixelgrid") }); } catch { set({ pixelgrid: [] }); } },
+  async importPixelGrid(id) { try { const r = await j<{ screens: number; surfaces: number; patterns: number; flags: string[] }>("/api/import/pixelmapper/hub", { method: "POST", body: JSON.stringify({ id }) }); await get().load(); return `Loaded ${r.screens} screens (${r.surfaces} surfaces), ${r.patterns} test patterns${r.flags.length ? ` — ${r.flags.join("; ")}` : ""}`; } catch (e: any) { return `PixelGrid import failed: ${e.message}`; } },
+  async importScreenMaps(o) { try { const r = await j<{ screens: number; project?: string; ids: string[] }>("/api/import/screenmaps", { method: "POST", body: JSON.stringify(o) }); await get().load(); return `Loaded ${r.screens} screens from screen maps${r.project ? ` (${r.project})` : ""}: ${r.ids.join(", ")}`; } catch (e: any) { return `Screen maps failed: ${e.message}`; } },
   async loadBoard() { try { const [board, versions] = await Promise.all([j<Board>("/api/board"), j<any[]>("/api/versions")]); set({ board, versions }); } catch {} },
   setMode(m) { localStorage.setItem("surface.mode", m); set({ mode: m }); },
   async runPrepare(dir, deleteOriginals) { set({ prepare: { phase: "probing", dir }, transcode: { running: true, progress: {} } }); try { await j("/api/prepare", { method: "POST", body: JSON.stringify({ dir, deleteOriginals }) }); } catch (e: any) { set({ prepare: { phase: "failed", detail: e.message }, transcode: { running: false, progress: {} } }); } },

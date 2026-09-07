@@ -32,7 +32,9 @@ import { planTranscodes } from "../core/intake/transcode.js";
 import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
 import { ocrAvailable, ocrFile, type OcrResult } from "../core/intake/ocr.js";
 import { toShowCall, fromShowCall } from "../core/integrations/showcall.js";
-import { fromPixelMapper, contentGuideRows } from "../core/integrations/pixelmapper.js";
+import { fromPixelMapper, contentGuideRows, autoRouting, screensFromMapFiles } from "../core/integrations/pixelmapper.js";
+import { copyFileSync, mkdirSync as mkdirSync2 } from "node:fs";
+import { basename, dirname } from "node:path";
 import { buildBundle } from "../core/index.js";
 import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
@@ -70,6 +72,7 @@ export function buildAdapters(cfg: SurfaceConfig, getVars: () => Record<string, 
 export async function startServer(showFile: string, cfg: SurfaceConfig) {
   // ── projects + hub session (optional: only when the app runs with a data dir)
   const store = cfg.dataDir ? new ProjectStore(cfg.dataDir) : null;
+  let lastIntake: any = null;
   let hubState: HubState = store?.readHub() ?? { token: null, session: null };
   const hub = new HubClient(hubState.token, cfg.hubUrl ?? HUB_URL);
   let activeId: string | null = null;
@@ -98,6 +101,15 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
   runner.on((e) => io.emit(e.type, e));
 
+  /** Where this project's converted media lives: set by the first Prepare, else beside the project file. */
+  const mediaRootOf = () => doc.mediaRoot ?? lastIntake?.mediaDir ?? join(dirname(showFile), "media");
+  /** After a conversion run: remember slot → file so every cue (and every engine build) points at the converted media. */
+  const absorbManifest = (mediaDir: string) => {
+    const mp = join(mediaDir, "_manifest.json"); if (!existsSync(mp)) return;
+    const man: { slot: string; outputs: string[] }[] = JSON.parse(readFileSync(mp, "utf8")); const media = { ...(doc.media ?? {}) };
+    for (const m of man) if (m.outputs?.[0]) media[m.slot] = relative(mediaDir, m.outputs[0]).replace(/\\/g, "/");
+    setShow({ ...doc, mediaRoot: doc.mediaRoot ?? mediaDir, media });
+  };
   /** Replace the live show: re-derive cues, restart the runner, persist (to the project when one is open). */
   const setShow = (next: ShowDoc, file = showFile, id = activeId) => {
     doc = next; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); showFile = file; activeId = id;
@@ -145,7 +157,6 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.delete("/api/projects/:id", async (q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (q.params.id === activeId) return res.status(409).json({ error: "close it first (open another project)" }); store.remove(q.params.id); if (q.query.cloud && hub.signedIn) { try { await hub.delete(`project:${q.params.id}`); } catch (e: any) { return res.json({ ok: true, warning: `removed locally; hub: ${e.message}`, ...projectsView() }); } } res.json({ ok: true, ...projectsView() }); });
   app.post("/api/projects/sync", async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); });
   app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
-  let lastIntake: any = null;
   const mediaDirFor = (dir: string, outDir?: string) => outDir ?? join(dir, "..", "media");
   /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
   async function runIntake(dir: string, o: { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string }) {
@@ -176,25 +187,25 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (!lastIntake) return res.status(400).json({ error: "run intake first" }); if (transcodeRun.running) return res.status(409).json({ error: "already running" });
     transcodeRun = { running: true, started: new Date().toISOString(), events: [] }; res.json({ ok: true, jobs: lastIntake.jobs.length });
     const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
-    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); }
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); absorbManifest(lastIntake.mediaDir); }
     catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
   // ── the board's one button: intake with everything inferred, then convert; originals deleted only if asked (after verify)
   app.post("/api/prepare", async (q, res) => {
     const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); if (transcodeRun.running) return res.status(409).json({ error: "already converting" });
     io.emit("prepare", { phase: "probing", dir });
-    try { await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr ?? true, engine: q.body?.engine ?? "resolume" }); } catch (e: any) { io.emit("prepare", { phase: "failed", detail: e.message }); return res.status(500).json({ error: e.message }); }
+    try { await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr ?? true, engine: q.body?.engine ?? "resolume", outDir: doc.mediaRoot }); if (!doc.mediaRoot) setShow({ ...doc, mediaRoot: lastIntake.mediaDir }); } catch (e: any) { io.emit("prepare", { phase: "failed", detail: e.message }); return res.status(500).json({ error: e.message }); }
     res.json({ ok: true, files: lastIntake.probes, jobs: lastIntake.jobs.length, scheme: lastIntake.scheme });
     if (q.body?.convert === false || !lastIntake.jobs.length) { io.emit("prepare", { phase: "done" }); return; }
     transcodeRun = { running: true, started: new Date().toISOString(), events: [] };
     const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
-    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); }
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); absorbManifest(lastIntake.mediaDir); }
     catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("prepare", { phase: "done" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
   // ── the Card Board itself, the promoter request, thumbnails
   const thumbDir = join(cfg.dataDir ?? tmpdir(), "surface-thumbs"); mkdirSync(thumbDir, { recursive: true });
   const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
-  const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: lastIntake?.mediaDir, thumbUrl });
+  const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl });
   app.get("/api/board", (_q, res) => res.json(board()));
   app.get("/api/board/request", (_q, res) => res.type("text/plain").send(promoterRequest(board(), doc)));
   app.get("/api/thumb", async (q, res) => {
@@ -222,10 +233,63 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     }
     const m = mergeSheets(doc, inc); (m.doc as any).versions = [...((doc as any).versions ?? []), { file, at: new Date().toISOString(), diff: m.diff }]; setShow(m.doc); res.json({ ok: true, diff: m.diff, flags: m.doc.review.flags });
   });
+  // ── screens from PixelGrid: exported screen-map PNGs (one per screen, 1:1 pixels, test pattern baked in) or the project via the hub
+  const placeholders = () => doc.review.flags.some((f) => /placeholder/i.test(f));
+  /** copy a test-pattern image under <mediaRoot>/_TEST and point the screen + the EVT.TEST slot at it */
+  const adoptTestPattern = (screen: { id: string; w: number; h: number }, src: string | Buffer, media: Record<string, string>) => {
+    const root = mediaRootOf(); const rel = `_TEST/${screen.id}_${screen.w}x${screen.h}.png`; mkdirSync2(join(root, "_TEST"), { recursive: true });
+    if (typeof src === "string") copyFileSync(src, join(root, rel)); else writeFileSync(join(root, rel), src);
+    media[`EVT_TEST_${screen.id}_${screen.w}x${screen.h}`] = rel; return rel;
+  };
+  const applyScreens = (screens: ShowDoc["screens"], surfaces: ShowDoc["surfaces"], screenWords: Record<string, string[]>, media: Record<string, string>, note: string) => {
+    const routing = placeholders() || !Object.keys(doc.routing).length ? autoRouting(screens, surfaces) : doc.routing;
+    const flags = doc.review.flags.filter((f) => !/placeholder/i.test(f));
+    setShow({ ...doc, screens, surfaces, routing, media: { ...(doc.media ?? {}), ...media }, mediaRoot: mediaRootOf(), review: { ...doc.review, flags: [...flags, note] } } as ShowDoc & { screenWords: any });
+    (doc as any).screenWords = { ...((doc as any).screenWords ?? {}), ...screenWords }; persist();
+  };
+  app.post("/api/import/screenmaps", async (q, res) => {
+    let files: string[] = q.body?.files ?? [];
+    if (q.body?.dir) files = readdirSync(q.body.dir).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).map((f) => join(q.body.dir, f));
+    files = files.filter((f) => existsSync(f)); if (!files.length) return res.status(400).json({ error: "no PNG screen maps found" });
+    const probed = []; for (const f of files) { try { const p = await probe(f); probed.push({ path: f, name: basename(f), w: p.w, h: p.h }); } catch { probed.push({ path: f, name: basename(f), w: 0, h: 0 }); } }
+    const found = screensFromMapFiles(probed.map((p) => ({ name: p.name, w: p.w, h: p.h }))); const byName = new Map(probed.map((p) => [p.name, p.path]));
+    const media: Record<string, string> = {}; const replace = placeholders() || q.body?.replace === true;
+    // keep ids that already exist for the same size/name (media is mapped by id), add the rest
+    const screens = replace ? [] : [...doc.screens]; const surfaces = replace ? [] : [...doc.surfaces]; const words: Record<string, string[]> = {};
+    for (const sc of found.screens) {
+      const existing = screens.find((s) => s.id === sc.id || (s.w === sc.w && s.h === sc.h && s.name.toLowerCase() === sc.name.toLowerCase()));
+      const target = existing ?? { id: sc.id, name: sc.name, w: sc.w, h: sc.h }; if (existing) { existing.w = sc.w; existing.h = sc.h; } else { screens.push(target); surfaces.push({ id: target.id, name: target.name, screens: [target.id], independent: /host|booth|table|scale|podium/i.test(target.name) || undefined }); }
+      (target as any).testPattern = adoptTestPattern(target, byName.get(sc.file)!, media); words[target.id] = [target.name.toLowerCase(), ...target.name.toLowerCase().split(/[\s_-]+/).filter((w) => w.length > 3)];
+    }
+    applyScreens(screens, surfaces, words, media, `Screens loaded from ${found.screens.length} PixelGrid screen maps${found.project ? ` (${found.project})` : ""}`);
+    res.json({ ok: true, screens: found.screens.length, project: found.project, ids: found.screens.map((s) => s.id) });
+  });
+  app.get("/api/hub/pixelgrid", async (_q, res) => {
+    if (!hub.signedIn) return res.status(401).json({ error: "sign in first" });
+    try { const items = await hub.listApp("pixel"); res.json(items.filter((i) => i.key.startsWith("project:")).map((i) => ({ id: i.key.slice(8), name: i.preview?.name ?? i.key.slice(8), screens: (i.preview as any)?.screenCount, updatedAt: i.updated_at, visibility: i.visibility }))); }
+    catch (e: any) { res.status(502).json({ error: e.message }); }
+  });
+  app.post("/api/import/pixelmapper/hub", async (q, res) => {
+    if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const id: string = q.body?.id; if (!id) return res.status(400).json({ error: "id required" });
+    try {
+      const proj = await hub.getApp<any>("pixel", `project:${id}`); if (!proj) return res.status(404).json({ error: "no such PixelGrid project" });
+      const r = fromPixelMapper(proj.value); const media: Record<string, string> = {}; let patterns = 0;
+      // cached native renders ("generations") — the screen test patterns PixelGrid already drew for this project
+      try {
+        const gens = (await hub.listApp("pixel")).filter((i) => i.key.startsWith("generation:"));
+        for (const g of gens) { const full = await hub.getApp<any>("pixel", g.key); const v = full?.value; if (!v || v.projectId !== id || v.type !== "screen") continue;
+          for (const f of v.files ?? []) { const m = String(f.filename ?? "").match(/_(\d+)x(\d+)\.(png|jpe?g|webp)$/i); const pmIds: string[] = v.metadata?.screenIds ?? [];
+            const sc = r.screens.find((s) => pmIds.includes(s.pixelMapper?.screenId ?? "")) ?? (m ? r.screens.find((s) => s.w === Number(m[1]) && s.h === Number(m[2]) && !s.testPattern) : undefined); if (!sc) continue;
+            try { sc.testPattern = adoptTestPattern(sc, await hub.fetchFile(f.url), media); patterns++; } catch {} } }
+      } catch {}
+      applyScreens(r.screens, r.surfaces, r.screenWords, media, `Screens loaded from PixelGrid project '${proj.value?.metadata?.name ?? id}'${r.flags.length ? ` — ${r.flags.join("; ")}` : ""}`);
+      res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, patterns, flags: r.flags });
+    } catch (e: any) { res.status(502).json({ error: e.message }); }
+  });
   // ── build the engine live (Resolume over REST); the author-only bundle stays at /api/bundle
   app.post("/api/build/resolume", async (q, res) => {
     const ra = adapters.find((a) => a.id === "resolume") as ResolumeAdapter | undefined; if (!ra) return res.status(400).json({ error: "no Resolume adapter in surface.config.json" });
-    const mediaRoot = q.body?.mediaRoot ?? lastIntake?.mediaDir ?? join(process.cwd(), "media"); const plan = resolumePlan(doc, cues, mediaRoot, q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`));
+    const mediaRoot = q.body?.mediaRoot ?? mediaRootOf(); const plan = resolumePlan(doc, cues, mediaRoot, q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`));
     try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); res.json({ ok: true, ops: n }); }
     catch (e: any) { res.status(502).json({ error: e.message, hint: "Resolume Arena 7.8+ with Webserver enabled (Preferences → Webserver), on this machine or a reachable IP" }); }
   });

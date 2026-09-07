@@ -10,6 +10,7 @@ import { disguiseCueTables, mediaManifest, resolumePlan, resolumeScript } from "
 
 export * from "./types.js";
 export { boxingFightNight, boxingPressConference, boxingWeighIn, resolve, withCustomCues, fromLegacyBoutJson, companionPage, writeCueSheet, disguiseCueTables, mediaManifest, resolumePlan, resolumeScript };
+export { fromPixelMapper, normalizePixelMapper, autoRouting, screensFromMapFiles, contentGuideRows } from "./integrations/pixelmapper.js";
 
 export const packs: Record<string, Pack> = { [boxingFightNight.id]: boxingFightNight, [boxingPressConference.id]: boxingPressConference, [boxingWeighIn.id]: boxingWeighIn };
 
@@ -22,7 +23,10 @@ export function loadShowDoc(json: any): ShowDoc {
 /** Full derivation: pack cues + custom cues, then engine addresses. Pure; no I/O. */
 export function deriveCues(doc: ShowDoc, packId = boxingFightNight.id): Cue[] {
   const pack = packs[packId]; if (!pack) throw new Error(`unknown pack ${packId}`);
-  return resolve(doc, withCustomCues(pack.deriveCues(doc), doc.customCues));
+  const cues = resolve(doc, withCustomCues(pack.deriveCues(doc), doc.customCues));
+  // media resolution: the doc remembers which converted file fills each slot (transcode manifest, test patterns)
+  if (doc.media) for (const c of cues) for (const t of c.targets) for (const a of t.actions) if (a.op === "show") a.media.file = doc.media[a.media.slot] ?? null;
+  return cues;
 }
 
 export interface BuildOpts { outDir: string; companion: CompanionOpts; mediaRoot?: string }

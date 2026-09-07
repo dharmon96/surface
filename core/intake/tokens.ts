@@ -86,17 +86,23 @@ export function tokenise(path: string, probe?: Probe): FileEvidence {
 /** Venue screen synonym table: promoter words -> surface id. Seeded per venue (PixelMapper), grown as promoters invent spellings. */
 export interface ScreenSynonyms { [surfaceId: string]: { words: string[]; w: number; h: number } }
 
-export function screenFromEvidence(ev: FileEvidence, syn: ScreenSynonyms): { surface: string | null; by: "res" | "word" | "both" | null; candidates: string[] } {
-  const byRes = new Set<string>(); const byWord = new Set<string>();
+export function screenFromEvidence(ev: FileEvidence, syn: ScreenSynonyms): { surface: string | null; by: "res" | "word" | "both" | "aspect" | null; candidates: string[]; all?: string[] } {
+  const byRes = new Set<string>(); const byWord = new Set<string>(); const byAspect = new Set<string>();
   const w = ev.probe?.w, h = ev.probe?.h;
   for (const [id, s] of Object.entries(syn)) {
     if (w && h && w === s.w && h === s.h) byRes.add(id);
+    // promoters often render bigger than asked (4K for a 1080 wall) — same aspect within 1 % counts, pixels get scaled later
+    else if (w && h && s.w && s.h && Math.abs(w / h - s.w / s.h) / (s.w / s.h) < 0.01) byAspect.add(id);
     if (ev.screenWords.some((sw) => s.words.some((x) => sw.replace(/\s/g, "") === x.replace(/\s/g, "")))) byWord.add(id);
     if (ev.namedRes && ev.namedRes.w === s.w && ev.namedRes.h === s.h && !byRes.size) byWord.add(id); // named res counts as a word, pixels count as truth
   }
   const both = [...byRes].filter((x) => byWord.has(x));
   if (both.length === 1) return { surface: both[0], by: "both", candidates: both };
   if (byRes.size === 1) return { surface: [...byRes][0], by: "res", candidates: [...byRes] };
-  if (!byRes.size && byWord.size === 1) return { surface: [...byWord][0], by: "word", candidates: [...byWord] };
-  return { surface: null, by: null, candidates: [...new Set([...byRes, ...byWord])] };
+  if (byRes.size > 1) { const same = [...byRes]; return { surface: same[0], by: "res", candidates: same, all: same }; } // identical screens (IMAG L + R): one file serves both
+  const wordAspect = [...byWord].filter((x) => byAspect.has(x));
+  if (wordAspect.length === 1) return { surface: wordAspect[0], by: "both", candidates: wordAspect };
+  if (byWord.size === 1) return { surface: [...byWord][0], by: "word", candidates: [...byWord] };
+  if (!byWord.size && byAspect.size) { const a = [...byAspect]; return { surface: a[0], by: "aspect", candidates: a, all: a }; } // every screen of that shape gets it
+  return { surface: null, by: null, candidates: [...new Set([...byRes, ...byWord, ...byAspect])] };
 }
