@@ -26,7 +26,7 @@ interface S {
   pixelgrid: { id: string; name: string; screens?: number; updatedAt: string }[] | null; loadPixelGrid(): Promise<void>; importPixelGrid(id: string): Promise<string>; importScreenMaps(o: { dir?: string; files?: string[] }): Promise<string>;
   loadBoard(): Promise<void>; setMode(m: "prepare" | "run"): void; runPrepare(dir: string, deleteOriginals: boolean): Promise<void>; dropSheet(text: string, file: string): Promise<string[]>; buildResolume(): Promise<string>; requestText(): Promise<string>;
   loadHub(refresh?: boolean): Promise<void>; signIn(): Promise<void>; signOut(): Promise<void>; syncProjects(): Promise<void>;
-  createProject(p: { name: string; date?: string; venue?: string; pack?: string }): Promise<void>; importSheet(text: string, file: string): Promise<string[]>; openProject(id: string): Promise<void>; deleteProject(id: string, cloud: boolean): Promise<void>;
+  createProject(p: { name: string; date?: string; venue?: string; pack?: string }): Promise<void>; loadSample(): Promise<void>; importSheet(text: string, file: string): Promise<string[]>; openProject(id: string): Promise<void>; deleteProject(id: string, cloud: boolean): Promise<void>;
   load(): Promise<void>; connect(): void; go(n: number): Promise<void>; next(): Promise<void>; prev(): Promise<void>; panic(): Promise<void>;
   approve(): Promise<void>; saveDoc(d: ShowDoc): Promise<void>; runIntake(dir: string, override?: any, engine?: string, ocr?: boolean): Promise<void>; refreshHealth(): Promise<void>;
   startTranscode(deleteOriginals: boolean): Promise<void>;
@@ -58,6 +58,7 @@ export const useStore = create<S>((set, get) => ({
   },
   async signOut() { const d = (window as any).surface; if (d?.hubSignOut) await d.hubSignOut(); else await j("/api/hub/signout", { method: "POST" }); await get().loadHub(); },
   async syncProjects() { set({ hubBusy: "syncing…" }); try { const r = await j<SyncResult & ProjectsView>("/api/projects/sync", { method: "POST" }); set({ lastSync: { pushed: r.pushed, pulled: r.pulled, conflicts: r.conflicts, errors: r.errors, at: new Date().toLocaleTimeString() }, projects: { enabled: r.enabled, active: r.active, projects: r.projects } }); } catch (e: any) { set({ error: `Sync failed: ${e.message}` }); } finally { set({ hubBusy: null }); } },
+  async loadSample() { const r = await j<ProjectsView>("/api/projects/sample", { method: "POST" }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects } }); await get().load(); },
   async createProject(p) { const r = await j<ProjectsView>("/api/projects", { method: "POST", body: JSON.stringify(p) }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects } }); await get().load(); },
   async importSheet(text, file) { const r = await j<ProjectsView & { flags: string[] }>("/api/projects/import", { method: "POST", body: JSON.stringify({ text, file }) }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects } }); await get().load(); return r.flags ?? []; },
   async openProject(id) { const r = await j<ProjectsView>(`/api/projects/${id}/open`, { method: "POST" }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects }, intake: null }); await get().load(); },

@@ -16,6 +16,8 @@ export interface Screen {
   h: number;
   /** the screen's test pattern / line-up image (PixelGrid native export), relative to doc.mediaRoot */
   testPattern?: string;
+  /** where the screen stands in the venue, metres: x right, y up, z towards the audience; rotation radians (PixelGrid 3D or auto-layout) */
+  venue?: { x: number; y: number; z: number; wM: number; hM: number; rot?: [number, number, number]; source: "pixelgrid-3d" | "pixelgrid-2d" | "auto" };
   /** Optional link back to PixelMapper (Screen.id / canvasId) */
   pixelMapper?: { screenId?: string; canvasId?: string };
 }

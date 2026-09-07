@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore, type BoardCell, type BoardRow, type BoardSlot } from "../store";
+import { Venue } from "./Venue";
 
 /**
  * The Card Board — the whole show on one screen.
@@ -50,10 +51,34 @@ function Rounds({ row, screens, onFire, liveRound }: { row: BoardRow; screens: s
   </div>;
 }
 
+/** The rail's first panel in Prepare: what's done, what's next — every line is a button to the thing that fixes it. */
+function Checklist() {
+  const { board, doc, health, versions, setDrawer, hub } = useStore(); if (!board || !doc) return null;
+  const bouts = doc.data.bouts?.length ?? 0; const placeholders = /placeholder/i.test(doc.review.flags.join(" ")); const toConfirm = doc.review.flags.filter((f) => !/placeholder|no bouts yet/i.test(f)).length;
+  const engines = (health?.adapters ?? []).filter((a) => a.id !== "mock"); const resolume = engines.find((a) => a.id === "resolume");
+  const built = (doc as any).built?.resolume as string | undefined;
+  const steps: { done: boolean; text: string; action?: string; go?: () => void; soft?: boolean }[] = [
+    { done: bouts > 0, text: bouts ? `Card: ${bouts} bouts${versions.length ? ` (sheet v${versions.length})` : ""}` : "Drop the bout sheet or timing sheet" },
+    { done: !placeholders, text: placeholders ? "Screens are placeholders — load the venue" : `Screens: ${doc.screens.length} from ${doc.screens.some((s) => s.venue?.source?.startsWith("pixelgrid")) ? "PixelGrid" : "the map"}`, action: placeholders ? (hub?.signedIn ? "Load from PixelGrid" : "Load screens") : "Edit", go: () => setDrawer("Screens") },
+    { done: !!board.delivery && board.totals.missing === 0, soft: !!board.delivery, text: !board.delivery ? "Drop the promoter's graphics folder" : board.totals.missing ? `Graphics: ${board.totals.ready} ready · ${board.totals.missing} missing` : `Graphics: all ${board.totals.ready} ready` },
+    { done: toConfirm === 0, text: toConfirm ? `${toConfirm} thing${toConfirm > 1 ? "s" : ""} the sheet parser guessed` : "Card details confirmed", action: toConfirm ? "Confirm" : undefined, go: () => setDrawer("Card") },
+    { done: !!resolume?.connected, text: resolume ? (resolume.connected ? "Resolume connected" : "Resolume not answering") : engines.length ? `${engines.map((e) => e.id).join(", ")} ${engines.every((e) => e.connected) ? "connected" : "offline"}` : "No engine yet — rehearsal mode", action: resolume?.connected ? undefined : "Connect", go: () => setDrawer("Engines") },
+    { done: !!built, text: built ? `Resolume built ${new Date(built).toLocaleTimeString([], { timeStyle: "short" })}` : "Build Resolume when the graphics are in", soft: true },
+  ];
+  const next = steps.find((x) => !x.done);
+  return (
+    <div className="checklist"><h4>Show day checklist</h4>
+      {steps.map((x, i) => <div key={i} className={`step ${x.done ? "done" : x === next ? "next" : ""} ${x.soft && !x.done ? "soft" : ""}`}><i /><span>{x.text}</span>{x.action && x.go && <button className="x" onClick={x.go}>{x.action}</button>}</div>)}
+    </div>
+  );
+}
+
 export function Board() {
   const { board, doc, state, mode, prepare, transcode, versions, build, runPrepare, dropSheet, buildResolume, requestText, go, health } = useStore();
-  const [dir, setDir] = useState(""); const [del, setDel] = useState(false); const [toast, setToast] = useState<string | null>(null); const [dragging, setDragging] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [dir, setDir] = useState(""); const [del, setDel] = useState(false); const [venue, setVenue] = useState<"off" | "side" | "big">((localStorage.getItem("surface.venueMode") as any) || "side");
+  useEffect(() => { localStorage.setItem("surface.venueMode", venue); }, [venue]); const [toast, setToast] = useState<string | null>(null); const [dragging, setDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null); const liveRef = useRef<HTMLTableRowElement>(null);
+  useEffect(() => { liveRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [state?.bout]);
   useEffect(() => { if (board?.delivery?.dir && !dir) setDir(board.delivery.dir); }, [board?.delivery?.dir]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 6000); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === "Escape" && !useStore.getState().drawer) useStore.getState().select(null); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, []);
@@ -62,6 +87,7 @@ export function Board() {
   const screens = board.screens.map((s) => s.id);
   const run = mode === "run";
   const liveRow = state?.bout ?? null; const liveRound = state?.round ?? undefined;
+  const nextRow = liveRow ? board.rows[board.rows.findIndex((r) => r.id === liveRow) + 1]?.id ?? null : null;
   const P = Object.values(transcode.progress); const done = P.filter((p) => p.phase === "done" || p.phase === "skipped").length; const failed = P.filter((p) => p.phase === "failed").length; const jobs = Math.max(done + failed, board.totals.convert + board.totals.ready);
   const busy = transcode.running || (prepare && prepare.phase !== "done" && prepare.phase !== "failed");
 
@@ -77,35 +103,50 @@ export function Board() {
   const dropSheetBtn = async () => { if (desktop()?.readSheet) { const r = await desktop().readSheet(); if (!r) return; if (r.error) return say(r.error); const diff = await dropSheet(r.text, r.file); say(diff.length ? `Sheet merged: ${diff.slice(0, 4).join(" · ")}` : "Sheet merged — no changes"); } else fileRef.current?.click(); };
   const copyRequest = async () => { const t = await requestText(); try { await navigator.clipboard.writeText(t); say("Request copied — paste it into the email to the promoter"); } catch { window.prompt("Copy this:", t); } };
   const resolumeOnline = health?.adapters.some((a) => a.id === "resolume" && a.connected);
+  if (!(doc.data.bouts?.length)) return (
+    <div className={`board start ${dragging ? "over" : ""}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
+      {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
+      <div className="startcard">
+        <h2>Drop the bout sheet here</h2>
+        <p>The promoter's timing sheet or bout sheet (PDF). The card fills in — fighters, corners, rounds, titles — and every graphic it needs appears as a slot. Then drop the graphics folder on the same window.</p>
+        <div className="gorow"><button className="btn primary" onClick={dropSheetBtn}>Choose a sheet…</button><button className="btn" onClick={() => useStore.getState().setDrawer("Screens")}>Load the venue's screens first</button><button className="btn" onClick={() => useStore.getState().loadSample()}>Try the sample card</button></div>
+        <input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const diff = await dropSheet(await f.text(), f.name); say(diff.length ? `Sheet loaded` : "Sheet loaded"); }} />
+        <p className="dim small">Already have a project? Click the show name at the top.</p>
+      </div>
+    </div>);
 
   return (
     <div className={`board ${run ? "run" : ""}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
       {!run && <div className="strip">
-        <div className={`drop ${dragging ? "over" : ""}`}>
-          <button className="btn" onClick={pickFolder} disabled={!!busy}>{desktop() ? "Drop the promoter's folder" : "Folder path"}</button>
-          <input className="path" placeholder="…or paste the delivery folder path" value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && dir) runPrepare(dir, del); }} disabled={!!busy} />
+        <div className={`drop ${dragging ? "over" : ""} ${board.delivery ? "" : "empty"}`}>
           {busy ? <>
             <span className="prog"><i style={{ width: transcode.running ? `${(done / Math.max(1, jobs)) * 100}%` : "8%" }} /></span>
             <span className="num">{prepare?.phase === "probing" ? `reading ${board.delivery?.files ?? ""} files…` : `${done}/${jobs} converted${failed ? ` · ${failed} failed` : ""}`}</span>
-          </> : board.delivery ? <span className="num">{board.delivery.files} files · {board.totals.ready} ready · {board.totals.convert} to convert · {board.totals.missing} missing{board.totals.unmatched ? ` · ${board.totals.unmatched} unplaced` : ""}</span>
-            : <span className="num dim">nothing delivered yet</span>}
-          {!busy && dir && <button className="btn" onClick={() => runPrepare(dir, del)}>{board.delivery ? "Re-check" : "Prepare"}</button>}
-          <label className="dim small" title="Each original is deleted only after its converted file has been verified"><input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} /> delete originals</label>
+          </> : board.delivery ? <>
+            <span className="num"><b>{board.delivery.files} files</b> · {board.totals.ready} ready · {board.totals.convert} to convert · {board.totals.missing} missing{board.totals.unmatched ? ` · ${board.totals.unmatched} unplaced` : ""}</span>
+            <button className="btn" onClick={() => runPrepare(dir, del)} title={dir}>Check the folder again</button>
+          </> : <>
+            <span className="num"><b>Drop the promoter's graphics folder here</b> — it is read, matched to the card and converted in one go.</span>
+            {desktop() ? <button className="btn" onClick={pickFolder}>Choose folder…</button> : <input className="path" placeholder="or paste the folder path and press Enter" value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && dir) runPrepare(dir, del); }} />}
+          </>}
+          <label className="dim small" title="Each original is deleted only after its converted copy has been verified"><input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} /> delete originals once converted</label>
         </div>
         <div className="stack">
-          <button className="btn" onClick={copyRequest} disabled={!board.missing.length}>Copy request to promoter{board.missing.filter((m) => m.kind === "missing").length ? ` (${board.missing.filter((m) => m.kind === "missing").length})` : ""}</button>
-          <button className="btn primary" onClick={async () => say(await buildResolume())} disabled={!!build} title={resolumeOnline ? "Create the layer groups, columns and clips in the running Arena" : "Arena not reachable — check surface.config.json and Arena's Webserver preference"}>{build ? `building… ${build.done}/${build.total}` : "Build Resolume ▸"}</button>
+          <button className="btn" onClick={copyRequest} disabled={!board.missing.length} title="The missing list, in the promoter's words, on your clipboard">Copy request to promoter{board.missing.filter((m) => m.kind === "missing").length ? ` (${board.missing.filter((m) => m.kind === "missing").length})` : ""}</button>
+          <button className="btn primary" onClick={async () => say(await buildResolume())} disabled={!!build || !resolumeOnline} title={resolumeOnline ? "Create the layer groups, columns and clips in the running Arena" : "Connect Resolume first (Setup → Engines)"}>{build ? `building… ${build.done}/${build.total}` : "Build Resolume"}</button>
         </div>
       </div>}
       {run && <div className="runbar">
         <div className="big">{liveRow ? `${liveRow} · ${board.rows.find((r) => r.id === liveRow)?.title ?? ""}` : "Pre-show"}<small>{liveRound ? `round ${liveRound}` : ""}{state?.current ? ` · cue ${state.current}` : ""}</small></div>
         <span>next: <b>{state?.next ?? "—"}</b></span><kbd>Space</kbd> GO · <kbd>Backspace</kbd> back · <kbd>Esc</kbd> panic
         {board.rows[0]?.cells.TEST?.cues[0] && <button className="btn" onClick={() => go(board.rows[0].cells.TEST.cues[0].n)} title="Every screen's own test pattern — the line-up you can always go back to">Test patterns</button>}
+        <button className={`btn ${venue ? "on" : ""}`} onClick={() => setVenue(venue === "off" ? "side" : venue === "side" ? "big" : "off")} title="See what the walls are showing, on the LED map (plan or 3D)">{venue === "off" ? "Venue" : venue === "side" ? "Venue · bigger" : "Venue · hide"}</button>
         <button className="gobtn" onClick={() => useStore.getState().next()}>GO</button><button className="panic" onClick={() => useStore.getState().panic()}>PANIC</button>
       </div>}
 
-      <div className="wrap">
+      <div className={`wrap ${run && venue !== "off" ? `venue-${venue}` : ""}`}>
+        {run && venue === "big" && <div className="venuecol"><Venue big /></div>}
         <div className="boardwrap">
           <table className="grid">
             <thead><tr><th className="bout">Card <span className="n">{board.rows.length - 1} bouts · running order</span></th>{board.columns.map((c) => <th key={c.key}>{c.label} {c.sub && <span className="n">{c.sub}</span>}</th>)}</tr></thead>
@@ -114,7 +155,7 @@ export function Board() {
                 <tr key={r.id} className="evt"><td className="bout"><span className="ord">EVENT</span><div className="names">{r.title}</div><div className="meta">{Object.keys(r.cells).length} items</div></td>
                   <td colSpan={board.columns.length}><div className="stack">{Object.values(r.cells).map((c) => <Cell key={c.key} cell={c} row={r.id} screens={screens} tone={c.key === "FLAGS" ? "t-flag" : c.key === "VTS" ? "t-vt" : c.key === "TEST" ? "t-test" : "t-hold"} onFire={go} />)}</div></td></tr>
               ) : (
-                <tr key={r.id} className={liveRow === r.id ? "live" : ""}>
+                <tr key={r.id} className={liveRow === r.id ? "live" : run && liveRow && nextRow === r.id ? "next" : run && liveRow ? "rest" : ""} ref={liveRow === r.id ? liveRef : undefined}>
                   <td className="bout"><span className="ord">{String(r.order).padStart(2, "0")}{r.meta.isMain ? " · MAIN" : r.meta.isCoMain ? " · CO-MAIN" : ""}</span>
                     <div className="names" title={r.title}><span className="r">{surname(r.red?.name)}</span><span className="v">v</span><span className="b">{surname(r.blue?.name)}</span></div>
                     <div className="full">{r.red?.name} · {r.blue?.name}</div>
@@ -132,8 +173,10 @@ export function Board() {
           </table>
         </div>
 
-        <aside className="rail">
+        {run && venue === "side" && <div className="venuecol"><Venue /></div>}
+        <aside className="rail" hidden={run && venue !== "off"}>
           {!run && <Selected />}
+          {!run && <Checklist />}
           <div><h4>Screens{doc.screens.length && /placeholder/i.test(doc.review.flags.join(" ")) ? " · placeholders" : ""} <button className="x" onClick={() => useStore.getState().setDrawer("Screens")} title="Screens, groups and routing">Edit</button></h4>
             {board.screens.map((s) => <div key={s.id} className="screen"><span className="id">{s.id}</span><span className={`cov ${s.total && s.ready === s.total ? "ok" : s.ready ? "w" : ""}`}>{s.ready}/{s.total}</span><span className="sz">{s.w}×{s.h}{s.name !== s.id ? ` · ${s.name}` : ""}</span><span className="bar"><i style={{ width: `${s.total ? (s.ready / s.total) * 100 : 0}%`, background: s.ready === s.total ? "var(--ok)" : "var(--warn)" }} /></span></div>)}
           </div>
@@ -143,7 +186,6 @@ export function Board() {
           <div><h4>Sheet</h4>
             <div className="ver">{versions.length ? [...versions].reverse().slice(0, 3).map((v, i) => <span key={i}>{i === 0 ? <b>v{versions.length}</b> : `v${versions.length - i}`} · {new Date(v.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} {i === 0 && v.diff.length > 0 && v.diff[0] !== "first sheet" && <span className="diff">{v.diff.slice(0, 3).join(" · ")}</span>}</span>) : <span>{doc.source?.file ?? "no sheet yet"}</span>}
               <button className="btn" style={{ alignSelf: "flex-start" }} onClick={dropSheetBtn}>Drop a new sheet</button><input ref={fileRef} type="file" accept=".txt,.pdf" style={{ display: "none" }} onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const diff = await dropSheet(await f.text(), f.name); say(diff.length ? `Sheet merged: ${diff.slice(0, 4).join(" · ")}` : "Sheet merged — no changes"); }} />
-              {doc.review.status !== "approved" && (doc.data.bouts?.length ?? 0) > 0 && <button className="btn" style={{ alignSelf: "flex-start" }} onClick={() => useStore.getState().approve()}>Approve the card</button>}
             </div>
           </div>
           <div className="build"><h4>Build</h4>

@@ -18,8 +18,7 @@ let serverProc = null;
 function ensureDefaults() {
   const d = userDir(); fs.mkdirSync(d, { recursive: true });
   const show = path.join(d, "show.json"); const cfg = path.join(d, "surface.config.json");
-  // first run only: the Glendale sample card becomes the first project (the server imports a loose show.json once)
-  if (!fs.existsSync(show) && !fs.existsSync(path.join(d, "projects"))) fs.copyFileSync(path.join(__dirname, "..", "fixtures", "2026-06-13-glendale.bout.json"), show);
+  // no sample is forced on first run: the app opens on an empty card with "Load the sample card" one click away
   if (!fs.existsSync(cfg)) fs.writeFileSync(cfg, JSON.stringify({ port: PORT, adapters: [{ type: "mock" }] }, null, 2));
   return { show, cfg };
 }

@@ -32,7 +32,7 @@ import { planTranscodes } from "../core/intake/transcode.js";
 import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
 import { ocrAvailable, ocrFile, type OcrResult } from "../core/intake/ocr.js";
 import { toShowCall, fromShowCall } from "../core/integrations/showcall.js";
-import { fromPixelMapper, contentGuideRows, autoRouting, screensFromMapFiles } from "../core/integrations/pixelmapper.js";
+import { fromPixelMapper, contentGuideRows, autoRouting, autoVenue, screensFromMapFiles } from "../core/integrations/pixelmapper.js";
 import { copyFileSync, mkdirSync as mkdirSync2 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { buildBundle } from "../core/index.js";
@@ -54,6 +54,8 @@ import { tmpdir } from "node:os";
 
 export interface SurfaceConfig {
   port?: number;
+  /** where to persist engine settings changed from the UI (the file the server was started with) */
+  configFile?: string;
   /** where projects and the hub session live (Electron: the user-data dir). Without it the server is a single-show server. */
   dataDir?: string;
   hubUrl?: string;
@@ -146,6 +148,14 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     const m = store.create(d); if (q.body?.open !== false) setShow(d, store.path(m.id), m.id); res.json({ ok: true, project: m, ...projectsView() });
   });
   /** A sheet (pdftotext -layout text) becomes a new project, or merges into the open one with ?into=active. */
+  /** the Glendale sample card, for trying the app with no sheet in hand */
+  app.post("/api/projects/sample", (_q, res) => {
+    const cands = [new URL("../fixtures/2026-06-13-glendale.bout.json", import.meta.url), new URL("../../fixtures/2026-06-13-glendale.bout.json", import.meta.url)].map((u) => decodeURIComponent(u.pathname.replace(/^\/([A-Za-z]:)/, "$1")));
+    const f = cands.find((c) => existsSync(c)); if (!f) return res.status(404).json({ error: "sample not bundled" });
+    const d = loadShowDoc(JSON.parse(readFileSync(f, "utf8"))); d.event.name = "Sample card — Vargas v Rodriguez";
+    if (store) { const m = store.create(d); setShow(d, store.path(m.id), m.id); } else setShow(d);
+    res.json({ ok: true, ...projectsView() });
+  });
   app.post("/api/projects/import", (q, res) => {
     const text: string = typeof q.body === "string" ? q.body : q.body?.text; const file: string = q.body?.file ?? "sheet.txt"; if (!text) return res.status(400).json({ error: "text required" });
     const r = parseSheet(text, file); if ("kind" in r && r.kind === "rundown") return res.status(422).json({ error: "that is a running order — import it into an open project from the Review tab", rundown: r.rundown });
@@ -221,6 +231,19 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     if (!existsSync(out)) return res.status(404).end();
     res.set("Cache-Control", "private, max-age=86400").sendFile(out);
   });
+  // ── the venue view: screens in metres (PixelGrid 3D/2D positions, else an automatic layout) + what each surface is showing, as media URLs
+  app.get("/api/media", (q, res) => { const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end(); res.set("Cache-Control", "private, max-age=3600").sendFile(f, { acceptRanges: true }); });
+  app.get("/api/venue", (_q, res) => {
+    const screens = autoVenue(doc.screens, doc.surfaces); const root = mediaRootOf();
+    const url = (slot: string | null) => { const rel = slot ? doc.media?.[slot] : undefined; return rel && existsSync(join(root, rel)) ? `/api/media?f=${encodeURIComponent(join(root, rel))}` : null; };
+    const st = runner.getState();
+    // the runner tracks one slot per surface layer; a surface with several screens has one file per screen, named by that screen
+    const forScreen = (slot: string | null, sc: { id: string; w: number; h: number }, sf?: { screens: string[] }) => { if (!slot) return null; for (const id of sf?.screens ?? []) { const o = doc.screens.find((x) => x.id === id); const tail = o ? `_${o.id}_${o.w}x${o.h}` : ""; if (tail && slot.endsWith(tail)) return slot.slice(0, -tail.length) + `_${sc.id}_${sc.w}x${sc.h}`; } return slot; };
+    const out = screens.map((sc) => { const sf = doc.surfaces.find((x) => x.screens.includes(sc.id)); const ss = sf ? st.surfaces[sf.id] : undefined;
+      const L = (k: "BASE" | "OVERLAY" | "FULL") => { const slot = forScreen(ss?.[k].slot ?? null, sc, sf); return { slot, url: url(slot) }; };
+      return { id: sc.id, name: sc.name, w: sc.w, h: sc.h, venue: sc.venue, surface: sf?.id ?? null, independent: !!sf?.independent, testPattern: sc.testPattern ? `/api/media?f=${encodeURIComponent(join(root, sc.testPattern))}` : null, layers: { BASE: L("BASE"), OVERLAY: L("OVERLAY"), FULL: L("FULL") } }; });
+    res.json({ screens: out, current: st.current, bout: st.bout, round: st.round });
+  });
   // ── a newer sheet dropped on the open project: merge (fighter ids stay, graphics follow the fighter), keep the diff
   app.post("/api/sheet", (q, res) => {
     const text: string = typeof q.body === "string" ? q.body : q.body?.text; const file: string = q.body?.file ?? "sheet.txt"; if (!text) return res.status(400).json({ error: "text required" });
@@ -290,7 +313,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/build/resolume", async (q, res) => {
     const ra = adapters.find((a) => a.id === "resolume") as ResolumeAdapter | undefined; if (!ra) return res.status(400).json({ error: "no Resolume adapter in surface.config.json" });
     const mediaRoot = q.body?.mediaRoot ?? mediaRootOf(); const plan = resolumePlan(doc, cues, mediaRoot, q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`));
-    try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); res.json({ ok: true, ops: n }); }
+    try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); (doc as any).built = { ...((doc as any).built ?? {}), resolume: new Date().toISOString() }; persist(); res.json({ ok: true, ops: n }); }
     catch (e: any) { res.status(502).json({ error: e.message, hint: "Resolume Arena 7.8+ with Webserver enabled (Preferences → Webserver), on this machine or a reachable IP" }); }
   });
 
@@ -306,6 +329,27 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.get("/api/state", (_q, res) => res.json(runner.getState()));
   app.get("/api/variables", (_q, res) => res.json(runner.variables()));
   app.get("/api/health", (_q, res) => res.json({ adapters: adapters.map((a) => a.status()), uptimeSec: Math.round(process.uptime()) }));
+  // ── engines: set up connections from the app (no config file editing), test before saving, swap adapters live
+  const engineView = () => ({ adapters: cfg.adapters, status: adapters.map((a) => a.status()) });
+  app.get("/api/engines", (_q, res) => res.json(engineView()));
+  app.post("/api/engines/test", async (q, res) => {
+    const a = q.body; if (!a?.type) return res.status(400).json({ error: "type required" });
+    try {
+      if (a.type === "resolume") { const base = a.base ?? "http://127.0.0.1:8080/api/v1"; const t = Date.now(); const r = await fetch(`${base}/composition`, { signal: AbortSignal.timeout(2500) }); if (!r.ok) throw new Error(`Arena answered ${r.status}`); const c: any = await r.json(); return res.json({ ok: true, detail: `${c.name?.value ?? "composition"} · ${c.layergroups?.length ?? 0} groups · ${c.columns?.length ?? 0} columns · ${Date.now() - t} ms` }); }
+      if (a.type === "disguise") { const t = Date.now(); const r = await fetch(`http://${a.host}/api/session/status/health`, { signal: AbortSignal.timeout(2500) }); if (!r.ok) throw new Error(`disguise answered ${r.status}`); return res.json({ ok: true, detail: `director reachable · ${Date.now() - t} ms` }); }
+      if (a.type === "companion") { const base = a.base ?? "http://127.0.0.1:8000"; const t = Date.now(); const r = await fetch(`${base}/api/variables`, { signal: AbortSignal.timeout(2500) }).catch(() => fetch(`${base}/`, { signal: AbortSignal.timeout(2500) })); if (!r.ok) throw new Error(`Companion answered ${r.status}`); return res.json({ ok: true, detail: `Companion reachable · ${Date.now() - t} ms` }); }
+      res.json({ ok: true, detail: "rehearsal mode — nothing to reach" });
+    } catch (e: any) { res.json({ ok: false, detail: /aborted|timeout/i.test(e.message) ? "no answer in 2.5 s — is it running, and is the web server enabled?" : e.message }); }
+  });
+  app.put("/api/engines", async (q, res) => {
+    const list = Array.isArray(q.body?.adapters) ? q.body.adapters : null; if (!list) return res.status(400).json({ error: "adapters[] required" });
+    cfg.adapters = list.length ? list : [{ type: "mock" }];
+    for (const a of adapters) await a.close().catch(() => {});
+    const fresh = buildAdapters(cfg, () => runner.variables()); adapters.splice(0, adapters.length, ...fresh); // same array the runner holds
+    for (const a of adapters) await a.init(doc, cues);
+    if (cfg.configFile) { try { writeFileSync(cfg.configFile, JSON.stringify({ ...(existsSync(cfg.configFile) ? JSON.parse(readFileSync(cfg.configFile, "utf8")) : {}), adapters: cfg.adapters }, null, 2)); } catch {} }
+    io.emit("health", engineView()); res.json(engineView());
+  });
   app.post("/api/cue/:n/go", async (q, res) => { const c = await runner.go(Number(q.params.n)); c ? res.json({ ok: true, cue: { n: c.n, id: c.id, name: c.name } }) : res.status(404).json({ ok: false, error: `no cue ${q.params.n}` }); });
   app.post("/api/cue/:id/go-by-id", async (q, res) => { const c = cues.find((x) => x.id === q.params.id); c ? res.json({ ok: true, cue: await runner.go(c.n) }) : res.status(404).json({ ok: false }); });
   app.post("/api/next", async (_q, res) => res.json({ ok: true, cue: (await runner.next())?.id ?? null }));
@@ -326,7 +370,7 @@ if (process.argv[1] && /server[\\/]index\.[tj]s$/.test(process.argv[1])) {
   const args = process.argv.slice(2); const flag = (k: string, d: string) => { const i = args.indexOf(`--${k}`); return i >= 0 ? args[i + 1] : d; };
   const show = args.find((a) => !a.startsWith("--") && a.endsWith(".json") && !args.includes(`--config`) || a === flag("show", "")) ?? args[0] ?? "show.json";
   const cfgFile = flag("config", "surface.config.json");
-  const cfg: SurfaceConfig = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : { adapters: [{ type: "mock" }] };
+  const cfg: SurfaceConfig = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : { adapters: [{ type: "mock" }] }; cfg.configFile = cfgFile;
   if (flag("port", "")) cfg.port = Number(flag("port", "8090"));
   if (flag("data", "")) cfg.dataDir = flag("data", ""); if (flag("hub", "")) cfg.hubUrl = flag("hub", "");
   startServer(show, cfg).catch((e) => { console.error(e); process.exit(1); });

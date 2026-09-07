@@ -20,13 +20,20 @@ export function normalizePixelMapper(input: any): PMProject {
 const slug = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24) || "SCREEN";
 
 export function fromPixelMapper(input: PMProject | any): { screens: Screen[]; surfaces: Surface[]; screenWords: Record<string, string[]>; flags: string[] } {
-  const project = normalizePixelMapper(input);
+  const project = normalizePixelMapper(input); const scene3d: any = input?.data?.scene3d ?? input?.scene3d;
   const flags: string[] = []; const used = new Set<string>();
   const screens: Screen[] = project.screens.filter((s) => s.visible !== false).map((s) => {
     const px = panelPx(s.panel); let w = s.panelsX * px.w, h = s.panelsY * px.h; if (s.rotation === 90 || s.rotation === 270) [w, h] = [h, w];
     if (!w || !h) flags.push(`${s.name}: panel preset has no pixel size — set it in PixelMapper`);
     let id = slug(s.name); while (used.has(id)) id += "_2"; used.add(id);
-    return { id, name: s.name, w, h, pixelMapper: { screenId: s.id, canvasId: s.canvasId ?? undefined } };
+    const sc: Screen = { id, name: s.name, w, h, pixelMapper: { screenId: s.id, canvasId: s.canvasId ?? undefined } };
+    // physical size from the panel preset; position from the 3D scene when placed there, else the 2D canvas (display units ≈ LED pixels)
+    const pw = (s.panel as any)?.physicalWidth as number | undefined, ph = (s.panel as any)?.physicalHeight as number | undefined;
+    const wM = pw ? s.panelsX * pw : w / 400, hM = ph ? s.panelsY * ph : h / 400; // no preset → assume ~2.5 mm pitch
+    const o = scene3d?.screen3D?.[s.id]; const pitch = wM / Math.max(1, w);
+    if (o?.position) sc.venue = { x: o.position.x, y: o.position.y, z: o.position.z, wM: wM * (o.scale?.x ?? 1), hM: hM * (o.scale?.y ?? 1), rot: o.rotation ? [o.rotation.x, o.rotation.y, o.rotation.z] : undefined, source: "pixelgrid-3d" };
+    else if (typeof (s as any).posX === "number") sc.venue = { x: ((s as any).posX + w / 2) * pitch, y: 2.5 + 1.5 - ((s as any).posY + h / 2) * pitch, z: 0, wM, hM, source: "pixelgrid-2d" }; // canvas y grows down; hang the canvas ~4 m up
+    return sc;
   });
   const byPm = new Map(screens.map((sc) => [sc.pixelMapper!.screenId!, sc.id]));
   const groups = project.screenGroups ?? project.groups ?? []; const grouped = new Set<string>();
@@ -73,4 +80,24 @@ export function screensFromMapFiles(files: { name: string; w: number; h: number 
   const used = new Set<string>();
   const screens = stems.map((stem) => { const p = byStem.get(stem)!; const name = (prefix && p.mode && stem.startsWith(prefix) ? stem.slice(prefix.length) : stem).replace(/_/g, " ").trim() || stem; let id = name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24) || "SCREEN"; while (used.has(id)) id += "_2"; used.add(id); return { id, name, w: p.w, h: p.h, file: p.file }; });
   return { screens, project: prefix ? prefix.slice(0, -1).replace(/_/g, " ") : undefined };
+}
+
+/**
+ * A venue layout when PixelGrid gave us none: the biggest wall centred and 3 m up, ribbons below it, 16:9 screens to the
+ * sides, independent screens (booth, tables) off to the right. Physical size assumes 2.5 mm pitch unless the screen knows better.
+ */
+export function autoVenue(screens: Screen[], surfaces: Surface[]): Screen[] {
+  const indep = new Set(surfaces.filter((s) => s.independent).flatMap((s) => s.screens));
+  const size = (s: Screen) => ({ wM: s.venue?.wM ?? s.w / 400, hM: s.venue?.hM ?? s.h / 400 });
+  const rest = screens.filter((s) => !s.venue);
+  const main = [...rest].filter((s) => !indep.has(s.id) && s.w / s.h <= 6).sort((a, b) => b.w * b.h - a.w * a.h)[0];
+  const out = screens.map((s) => ({ ...s }));
+  const place = (id: string, x: number, y: number, z: number) => { const s = out.find((o) => o.id === id)!; const { wM, hM } = size(s); s.venue = { x, y, z, wM, hM, source: "auto" }; };
+  if (main) place(main.id, 0, 3 + size(main).hM / 2, 0);
+  const mainW = main ? size(main).wM : 8;
+  let ribbonY = main ? 3 - 0.6 : 2; for (const s of rest.filter((s) => s.w / s.h > 6 && !indep.has(s.id))) { place(s.id, 0, ribbonY, 0.6); ribbonY -= size(s).hM + 0.4; }
+  const sides = rest.filter((s) => !indep.has(s.id) && s.w / s.h <= 6 && s.id !== main?.id);
+  sides.forEach((s, i) => { const { wM, hM } = size(s); const k = Math.floor(i / 2) + 1; const sign = i % 2 === 0 ? -1 : 1; place(s.id, sign * (mainW / 2 + 1 + wM / 2 + (k - 1) * (wM + 1)), 3 + hM / 2, 0.3); });
+  let ix = mainW / 2 + 6; for (const s of rest.filter((s) => indep.has(s.id))) { const { wM, hM } = size(s); place(s.id, ix + wM / 2, 1 + hM / 2, 4); ix += wM + 1; }
+  return out;
 }
