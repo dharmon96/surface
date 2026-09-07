@@ -14,6 +14,9 @@ type Drawer = (typeof DRAWERS)[number];
 export default function App() {
   const { doc, cues, state, health, error, load, connect, loadHub, hub, projects, mode, setMode } = useStore();
   const [drawer, setDrawer] = useState<Drawer | null>(null);
+  const [theme, setTheme] = useState<"dark" | "light" | "">(() => (localStorage.getItem("surface.theme") as any) || "");
+  useEffect(() => { document.documentElement.classList.remove("dark", "light"); if (theme) document.documentElement.classList.add(theme); localStorage.setItem("surface.theme", theme); }, [theme]);
+  const isDark = theme === "dark" || (!theme && window.matchMedia("(prefers-color-scheme: dark)").matches);
   useEffect(() => { load(); connect(); loadHub(true); const t = setInterval(() => useStore.getState().refreshHealth().catch(() => {}), 5000); return () => clearInterval(t); }, []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -29,11 +32,11 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div className="brand">SUR<span>FACE</span></div>
+        <div className="brand">Surface</div>
         {doc && <div className="show" onClick={() => setDrawer("Projects")} title="Projects" style={{ cursor: "pointer" }}>{doc.event.name}<small>{[doc.event.date, doc.event.venue, doc.event.broadcast?.network].filter(Boolean).join(" · ")}{cues.length ? ` · ${cues.length} cues` : ""}</small></div>}
         <div className="mode" role="tablist"><button className={mode === "prepare" ? "on" : ""} onClick={() => setMode("prepare")}>Prepare</button><button className={mode === "run" ? "on" : ""} onClick={() => setMode("run")}>Run</button></div>
         <nav className="more">{DRAWERS.map((d) => <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)}>{d}</button>)}</nav>
-        <div className="tags">{projects?.enabled && <span className={`tag ${hub?.signedIn ? "ok" : ""}`} title={hub?.user?.email ?? "not signed in"}>{hub?.signedIn ? hub.user?.name ?? hub.user?.email : "offline"}</span>} {doc && <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span>} <span className={`tag ${online ? "ok" : "bad"}`}>{online}/{health?.adapters.length ?? 0} engines</span></div>
+        <div className="tags"><button className="theme" title="Switch theme" onClick={() => setTheme(isDark ? "light" : "dark")}>{isDark ? "Light" : "Dark"}</button>{projects?.enabled && <span className={`tag ${hub?.signedIn ? "ok" : ""}`} title={hub?.user?.email ?? "not signed in"}>{hub?.signedIn ? hub.user?.name ?? hub.user?.email : "offline"}</span>} {doc && <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span>} <span className={`tag ${online ? "ok" : "bad"}`}>{online}/{health?.adapters.length ?? 0} engines</span></div>
       </header>
       <main className="main">
         {error && <div className="panel" style={{ borderColor: "var(--red)", margin: 12 }}>{error} <button style={{ marginLeft: 8 }} onClick={() => useStore.setState({ error: null })}>dismiss</button></div>}

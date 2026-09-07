@@ -102,7 +102,17 @@ export interface ShowDoc {
   /** default transition per graphic type, e.g. { WINNER: "stinger:whoosh", UP_NEXT: "stinger:whoosh" } */
   transitions?: Record<string, string>;
   review: { status: "draft" | "approved"; flags: string[] };
+  /** how the engine composition is laid out — see core/engine/layout.ts */
+  build?: { resolumeLayout?: ResolumeLayout; disguiseLayout?: ResolumeLayout };
 }
+
+/**
+ * "per-screen": one layer group (disguise: track) per surface with BASE/OVERLAY/FULL layers; a cue that only touches some
+ *               screens connects the column in just those groups (Companion fires one action per group).
+ * "together":   one group "SHOW" with a single layer per surface — everything a cue does lands in the same column and
+ *               plays at once — plus a "ROUNDS" group holding the overlays so a round card never re-fires the walls.
+ */
+export type ResolumeLayout = "per-screen" | "together";
 
 export interface Pack {
   id: string;                                  // "boxing.fightnight"

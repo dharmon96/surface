@@ -133,7 +133,10 @@ export function Board() {
             </div>
           </div>
           <div className="build"><h4>Build</h4>
-            <button className="btn" onClick={async () => say(await buildResolume())} disabled={!!build}>Resolume Arena <span>{doc.surfaces.length} groups · {useStore.getState().cues.length} cols</span></button>
+            <div className="seg" title="How the composition is laid out. Per screen: a layer group per screen, a cue fires only the groups it touches (Companion presses each). Together: one SHOW group where every column fires everything at once, plus a ROUNDS group so round cards never restart the walls.">
+              {(["per-screen", "together"] as const).map((l) => <button key={l} className={(doc.build?.resolumeLayout ?? "per-screen") === l ? "on" : ""} onClick={() => useStore.getState().saveDoc({ ...doc, build: { ...(doc.build ?? {}), resolumeLayout: l } })}>{l === "per-screen" ? "Group per screen" : "All together"}</button>)}
+            </div>
+            <button className="btn" onClick={async () => say(await buildResolume())} disabled={!!build}>Resolume Arena <span>{(doc.build?.resolumeLayout ?? "per-screen") === "together" ? "SHOW + ROUNDS" : `${doc.surfaces.length} groups`} · {useStore.getState().cues.length} cols</span></button>
             <button className="btn" onClick={async () => { try { const r = await fetch("/api/bundle", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const b = await r.json(); say(`Bundle written to ${b.outDir} (${b.files.length} files)`); } catch (e: any) { say(e.message); } }}>Companion + cue sheet + disguise <span>bundle</span></button>
           </div>
           <div className="legend"><span><i style={{ background: "var(--ok)" }} />ready</span><span><i style={{ background: "var(--warn)" }} />will convert</span><span><i style={{ border: "1px solid var(--miss)" }} />missing</span><span><i style={{ background: "var(--line2)" }} />not on this screen</span><span>squares = {screens.join(" · ")}</span></div>

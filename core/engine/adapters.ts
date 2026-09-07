@@ -1,6 +1,6 @@
 import { createSocket, type Socket } from "node:dgram";
 import type { Cue, ShowDoc } from "../types.js";
-import { resolumeAddress, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
+import { resolumeAddress, resolumeGroupsFor, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
 import { expandScope } from "../naming.js";
 import { stingerColumn, type ResolumeOp } from "../gen/engines.js";
 
@@ -36,9 +36,9 @@ export class ResolumeAdapter implements EngineAdapter {
         const col = stingerColumn(this.doc, this.cues, op.stinger.id); if (col === null) throw new Error(`stinger ${op.stinger.id} has no column`);
         for (const s of op.surfaces ?? []) await this.req("POST", `/composition/layergroups/${resolumeAddress(this.doc, s, "BASE").group}/columns/${col}/connect`);
       } else if (op.kind === "fireCue" && op.cue) {
-        const r = op.cue.resolume!; const groups = r.groups === "ALL" ? null : r.groups;
-        if (!groups) await this.req("POST", `/composition/columns/${r.column}/connect`);
-        else for (const s of groups) await this.req("POST", `/composition/layergroups/${resolumeAddress(this.doc, s, "BASE").group}/columns/${r.column}/connect`);
+        const r = op.cue.resolume!; const groups = resolumeGroupsFor(this.doc, op.cue);
+        if (groups === "ALL") await this.req("POST", `/composition/columns/${r.column}/connect`);
+        else for (const g of groups) await this.req("POST", `/composition/layergroups/${g}/columns/${r.column}/connect`);
       } else if ((op.kind === "clearLayer" || op.kind === "revertBase") && op.surface && op.layer) {
         await this.req("POST", `/composition/layers/${resolumeAddress(this.doc, op.surface, op.layer).layer}/clear`);   // base keeps playing underneath
       } else if (op.kind === "setText" && op.surface && op.layer) {
@@ -49,7 +49,7 @@ export class ResolumeAdapter implements EngineAdapter {
         const { layer } = resolumeAddress(this.doc, op.surface, op.layer);
         await this.req("POST", `/composition/layers/${layer}/clips/${op.cue.n}/open`, `file:///${op.file}`);
       } else if (op.kind === "panic") {
-        await this.req("POST", "/composition/disconnectall").catch(async () => { for (let g = 1; g <= this.doc.surfaces.length; g++) for (const l of ["OVERLAY", "FULL"] as const) await this.req("POST", `/composition/layers/${resolumeAddress(this.doc, this.doc.surfaces[g - 1].id, l).layer}/clear`); });
+        await this.req("POST", "/composition/disconnectall").catch(async () => { for (const s of this.doc.surfaces) for (const l of ["OVERLAY", "FULL"] as const) await this.req("POST", `/composition/layers/${resolumeAddress(this.doc, s.id, l).layer}/clear`).catch(() => {}); });
       }
     } catch (e: any) { this.ok = false; this.lastError = e.message; throw e; }
   }
