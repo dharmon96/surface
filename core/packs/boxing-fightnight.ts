@@ -54,7 +54,8 @@ export const boxingFightNight: Pack = {
     // ── event-level holds: main, co-main, sponsor
     const main = bouts.find((b) => b.isMain) ?? bouts[bouts.length - 1];
     const coMain = bouts.find((b) => b.isCoMain) ?? bouts[bouts.length - 2];
-    const holds: [string, string][] = [["MAIN", `${fighters[main.red].name} v ${fighters[main.blue].name}`]];
+    // an empty card (new project) still gets the event holds so the operator has something to fire
+    const holds: [string, string][] = [["MAIN", main ? `${fighters[main.red].name} v ${fighters[main.blue].name}` : "Main event"]];
     if (coMain) holds.push(["COMAIN", `${fighters[coMain.red].name} v ${fighters[coMain.blue].name}`]);
     holds.push(["SPONSOR", "Sponsor loop"]);
     holds.forEach(([v, label], i) => {

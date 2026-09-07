@@ -1,6 +1,6 @@
 /**
  * Surface server — Run mode and Bridge mode.
- *   node --import tsx server/index.ts [show.json] [--config surface.config.json] [--port 8090]
+ *   node --import tsx server/index.ts [show.json] [--config surface.config.json] [--port 8090] [--data <dir>] [--hub https://mantaglow.com]
  *
  * HTTP (the API the generated Companion pages call in Bridge mode):
  *   GET  /api/show                 show doc summary + surfaces
@@ -13,6 +13,10 @@
  *   POST /api/text/:key   {value}  live text update (round, names) to engines that accept it
  *   POST /api/media/ended {slot}   an engine or watcher reports a VT finished → follow-on
  * Socket.IO: emits "state", "fired", "revert", "error" so the GO panel and ShowCall stay live.
+ *
+ * Projects + hub (desktop dashboard): with cfg.dataDir set, shows live as projects under <dataDir>/projects and can be synced
+ * to the MantaGlow account (GET /api/hub/status, POST /api/hub/token, POST /api/hub/signout, GET/POST /api/projects,
+ * POST /api/projects/import, POST /api/projects/:id/open, DELETE /api/projects/:id, POST /api/projects/sync).
  */
 import express from "express";
 import cors from "cors";
@@ -34,9 +38,16 @@ import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter, CompanionAdapter } from "../core/engine/adapters.js";
 import type { EngineAdapter } from "../core/engine/adapter.js";
+import type { ShowDoc } from "../core/types.js";
+import { parseSheet } from "../core/parse/index.js";
+import { HubClient, HUB_URL } from "../core/hub/client.js";
+import { ProjectStore, blankShowDoc, type HubState } from "./projects.js";
 
 export interface SurfaceConfig {
   port?: number;
+  /** where projects and the hub session live (Electron: the user-data dir). Without it the server is a single-show server. */
+  dataDir?: string;
+  hubUrl?: string;
   adapters: Array<
     | { type: "mock" }
     | { type: "resolume"; base?: string }
@@ -50,20 +61,71 @@ export function buildAdapters(cfg: SurfaceConfig, getVars: () => Record<string, 
 }
 
 export async function startServer(showFile: string, cfg: SurfaceConfig) {
+  // ── projects + hub session (optional: only when the app runs with a data dir)
+  const store = cfg.dataDir ? new ProjectStore(cfg.dataDir) : null;
+  let hubState: HubState = store?.readHub() ?? { token: null, session: null };
+  const hub = new HubClient(hubState.token, cfg.hubUrl ?? HUB_URL);
+  let activeId: string | null = null;
+  // the active show: a project when one is open (its show.json), else the file we were started with
+  if (store) { const ix = store.list(); const wanted = existsSync(join(cfg.dataDir!, "active.json")) ? JSON.parse(readFileSync(join(cfg.dataDir!, "active.json"), "utf8")).id : null; if (wanted && store.get(wanted)) { activeId = wanted; showFile = store.path(wanted); } else if (!existsSync(showFile) && ix[0]) { activeId = ix[0].id; showFile = store.path(activeId); } }
+  if (!existsSync(showFile)) { const d = blankShowDoc("Untitled show"); if (store) { const m = store.create(d); activeId = m.id; showFile = store.path(m.id); } else writeFileSync(showFile, JSON.stringify(d, null, 1)); }
+
   let doc = loadShowDoc(JSON.parse(readFileSync(showFile, "utf8"))); let cues = deriveCues(doc, (doc as any).pack);
   let runner: Runner; const adapters = buildAdapters(cfg, () => runner.variables());
   runner = new Runner(doc, cues, adapters);
   for (const a of adapters) await a.init(doc, cues);
 
-  const app = express(); app.use(cors()); app.use(express.json({ limit: "20mb" })); app.use(express.text());
+  const app = express(); app.use(cors()); app.use(express.json({ limit: "20mb" })); app.use(express.text({ limit: "20mb" }));
   if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) { app.use(express.static(process.env.SURFACE_STATIC)); }
   const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
   runner.on((e) => io.emit(e.type, e));
 
+  /** Replace the live show: re-derive cues, restart the runner, persist (to the project when one is open). */
+  const setShow = (next: ShowDoc, file = showFile, id = activeId) => {
+    doc = next; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); showFile = file; activeId = id;
+    if (store && activeId) store.update(activeId, doc); else writeFileSync(showFile, JSON.stringify(doc, null, 1));
+    if (store && cfg.dataDir) writeFileSync(join(cfg.dataDir, "active.json"), JSON.stringify({ id: activeId }));
+    io.emit("show", { type: "show", event: doc.event, project: activeId });
+  };
+  const persist = () => setShow(doc);
+
   // ── authoring endpoints used by the desktop UI
   app.get("/api/doc", (_q, res) => res.json(doc));
-  app.put("/api/doc", (q, res) => { doc = loadShowDoc(q.body); cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, cues: cues.length }); });
-  app.post("/api/review/approve", (_q, res) => { doc.review.status = "approved"; writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true }); });
+  app.put("/api/doc", (q, res) => { setShow(loadShowDoc(q.body)); res.json({ ok: true, cues: cues.length }); });
+  app.post("/api/review/approve", (_q, res) => { doc.review.status = "approved"; persist(); res.json({ ok: true }); });
+
+  // ── hub account + projects (the dashboard)
+  const hubStatus = () => ({ hubUrl: cfg.hubUrl ?? HUB_URL, signedIn: hub.signedIn, user: hubState.session?.user ?? null, organization: hubState.session?.organization ?? null, apps: hubState.session?.apps ?? [], checkedAt: hubState.checkedAt, error: hubState.error, projectsEnabled: !!store });
+  const saveHub = () => { if (store) store.writeHub(hubState); };
+  app.get("/api/hub/status", async (q, res) => {
+    if (q.query.refresh && hub.signedIn) { try { hubState = { ...hubState, session: await hub.me(), checkedAt: new Date().toISOString(), error: undefined }; } catch (e: any) { hubState = { ...hubState, checkedAt: new Date().toISOString(), error: e.message }; if (/expired/.test(e.message)) { hubState.token = null; hub.setToken(null); } } saveHub(); }
+    res.json(hubStatus());
+  });
+  app.post("/api/hub/token", async (q, res) => {
+    const token: string = q.body?.token; if (!token) return res.status(400).json({ error: "token required" });
+    hub.setToken(token);
+    try { const session = await hub.me(); hubState = { token, session, checkedAt: new Date().toISOString() }; saveHub(); res.json(hubStatus()); }
+    catch (e: any) { hub.setToken(hubState.token); res.status(401).json({ error: e.message }); }
+  });
+  app.post("/api/hub/signout", (_q, res) => { hubState = { token: null, session: null }; hub.setToken(null); saveHub(); res.json(hubStatus()); });
+  const projectsView = () => ({ enabled: !!store, active: activeId, projects: store?.list() ?? [] });
+  app.get("/api/projects", (_q, res) => res.json(projectsView()));
+  app.post("/api/projects", (q, res) => {
+    if (!store) return res.status(400).json({ error: "projects need a data dir" });
+    const d = q.body?.doc ? loadShowDoc(q.body.doc) : blankShowDoc(q.body?.name ?? "Untitled show", { date: q.body?.date, venue: q.body?.venue, pack: q.body?.pack });
+    const m = store.create(d); if (q.body?.open !== false) setShow(d, store.path(m.id), m.id); res.json({ ok: true, project: m, ...projectsView() });
+  });
+  /** A sheet (pdftotext -layout text) becomes a new project, or merges into the open one with ?into=active. */
+  app.post("/api/projects/import", (q, res) => {
+    const text: string = typeof q.body === "string" ? q.body : q.body?.text; const file: string = q.body?.file ?? "sheet.txt"; if (!text) return res.status(400).json({ error: "text required" });
+    const r = parseSheet(text, file); if ("kind" in r && r.kind === "rundown") return res.status(422).json({ error: "that is a running order — import it into an open project from the Review tab", rundown: r.rundown });
+    const d = r as ShowDoc; if (q.body?.name) d.event.name = q.body.name;
+    if (!store) { setShow(d); return res.json({ ok: true, project: null, ...projectsView() }); }
+    const m = store.create(d); setShow(d, store.path(m.id), m.id); res.json({ ok: true, project: m, flags: d.review.flags, ...projectsView() });
+  });
+  app.post("/api/projects/:id/open", (q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); const d = store.readDoc(q.params.id); if (!d) return res.status(404).json({ error: "no such project" }); activeId = q.params.id; showFile = store.path(activeId); doc = loadShowDoc(d); cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(join(cfg.dataDir!, "active.json"), JSON.stringify({ id: activeId })); io.emit("show", { type: "show", event: doc.event, project: activeId }); res.json({ ok: true, ...projectsView() }); });
+  app.delete("/api/projects/:id", async (q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (q.params.id === activeId) return res.status(409).json({ error: "close it first (open another project)" }); store.remove(q.params.id); if (q.query.cloud && hub.signedIn) { try { await hub.delete(`project:${q.params.id}`); } catch (e: any) { return res.json({ ok: true, warning: `removed locally; hub: ${e.message}`, ...projectsView() }); } } res.json({ ok: true, ...projectsView() }); });
+  app.post("/api/projects/sync", async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); });
   app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
   let lastIntake: any = null;
   app.post("/api/intake", async (q, res) => {
@@ -98,11 +160,11 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.get("/api/transcode", (_q, res) => res.json({ running: transcodeRun.running, started: transcodeRun.started, recent: transcodeRun.events.slice(-50), result: transcodeRun.result }));
   // ── ShowCall / PixelMapper bridges and the author-only bundle
   app.get("/api/export/showcall", (_q, res) => res.json(toShowCall(doc, cues)));
-  app.post("/api/import/showcall", (q, res) => { const extra = fromShowCall(cues, q.body?.cues ?? q.body ?? []); doc.customCues = [...(doc.customCues ?? []).filter((c) => !String(c.id).startsWith("SC.")), ...extra]; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, imported: extra.length, cues: cues.length }); });
-  app.post("/api/import/pixelmapper", (q, res) => { const r = fromPixelMapper(q.body); doc.screens = r.screens; doc.surfaces = r.surfaces; (doc as any).screenWords = r.screenWords; doc.review.flags = [...doc.review.flags.filter((f) => !/placeholder/i.test(f)), ...r.flags]; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, flags: r.flags, cues: cues.length }); });
+  app.post("/api/import/showcall", (q, res) => { const extra = fromShowCall(cues, q.body?.cues ?? q.body ?? []); doc.customCues = [...(doc.customCues ?? []).filter((c) => !String(c.id).startsWith("SC.")), ...extra]; persist(); res.json({ ok: true, imported: extra.length, cues: cues.length }); });
+  app.post("/api/import/pixelmapper", (q, res) => { const r = fromPixelMapper(q.body); doc.screens = r.screens; doc.surfaces = r.surfaces; (doc as any).screenWords = r.screenWords; doc.review.flags = [...doc.review.flags.filter((f) => !/placeholder/i.test(f)), ...r.flags]; persist(); res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, flags: r.flags, cues: cues.length }); });
   app.get("/api/content-guide", (_q, res) => res.json(contentGuideRows(doc.screens, doc.surfaces)));
   app.post("/api/bundle", async (q, res) => { const outDir = q.body?.outDir ?? join(process.cwd(), "out", doc.event.id); const files = await buildBundle(doc, cues, { outDir, companion: { mode: q.body?.mode ?? "bridge", surfaceHost: q.body?.host ?? `127.0.0.1:${cfg.port ?? 8090}` } }); res.json({ ok: true, outDir, files }); });
-  app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length }));
+  app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length, project: activeId }));
   app.get("/api/cues", (_q, res) => res.json(cues));
   app.get("/api/state", (_q, res) => res.json(runner.getState()));
   app.get("/api/variables", (_q, res) => res.json(runner.variables()));
@@ -129,5 +191,6 @@ if (process.argv[1] && /server[\\/]index\.ts$/.test(process.argv[1])) {
   const cfgFile = flag("config", "surface.config.json");
   const cfg: SurfaceConfig = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, "utf8")) : { adapters: [{ type: "mock" }] };
   if (flag("port", "")) cfg.port = Number(flag("port", "8090"));
+  if (flag("data", "")) cfg.dataDir = flag("data", ""); if (flag("hub", "")) cfg.hubUrl = flag("hub", "");
   startServer(show, cfg).catch((e) => { console.error(e); process.exit(1); });
 }

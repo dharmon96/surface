@@ -1,4 +1,4 @@
-# BoutKit — Show-Control Console for Live-Event Graphics
+# Surface — Show-Control Console for Live-Event Graphics
 
 Takes a show's data (first pack: a boxing bout sheet) and produces a screen-aware cue list, then builds Resolume Arena
 compositions, disguise tracks and Bitfocus Companion pages from it — or runs the cues itself. Independent desktop app;
@@ -68,7 +68,14 @@ npm run cli -- intake show.json examples/Fight\ Night --direction opener-first -
 
 - `core/intake/execute.ts`: runs the plan with ffmpeg, checks encoders once (no `dxv` → HAP Q; no `hap` → H.264, recorded as `fallback`), writes to `.part` then verifies (decodes, duration within 70 ms) before renaming; `_manifest.json` keyed by source size+mtime makes re-runs skip; originals deleted only with `deleteOriginals` and only after verify. Tiles and pads to 4-px alignment for GPU codecs. Server: `POST /api/transcode` (progress via Socket.IO `transcode`), `GET /api/transcode`.
 - `core/integrations/showcall.ts`: `toShowCall` (section header per bout, Video-department instruction per cue, cue_number == Surface number) and `fromShowCall` (non-Surface cues → custom candidates). `core/integrations/pixelmapper.ts`: `fromPixelMapper` (PixelGrid Screen/ScreenGroup → Screen/Surface + seeded screen words; host/booth/table/scale names → independent) and `contentGuideRows`. Endpoints: `/api/export/showcall`, `/api/import/showcall`, `/api/import/pixelmapper`, `/api/content-guide`, `/api/bundle`.
-- `electron/main.cjs`: starts the server in-process (`ELECTRON_RUN_AS_NODE`), serves `dist/` via `SURFACE_STATIC`, show/config live in the user-data dir, menu to open a show.json; `preload.cjs` exposes `window.surface.pickFolder`. `npm run app` (built UI) / `npm run app:dev` (Vite). Packaging (electron-builder) not set up yet.
+- `electron/main.cjs`: starts the server in-process (`ELECTRON_RUN_AS_NODE`) with `--data <userData>`, serves `dist/` via `SURFACE_STATIC`; `preload.cjs` exposes `window.surface.{pickFolder, readSheet (pdftotext), hubSignIn, hubSignOut, openHub}`. `npm run app` (built UI) / `npm run app:dev` (Vite). Packaging (electron-builder) not set up yet.
+
+## Hub + projects (`server/projects.ts`, `core/hub/client.ts`, `src/pages/Hub.tsx`, `docs/HUB.md`)
+
+- Offline-first: with `cfg.dataDir` the server keeps projects at `<dataDir>/projects/<id>/show.json` (+ `index.json`, `active.json`); the open project is the live show and every save goes to it. Without a data dir it is the old single-show server (tests use both).
+- MantaGlow account: `HubClient` speaks the hub's existing desktop auth (`x-hub-session-token`) and per-app data API (`/api/data/surface/project:<id>`). Token comes from the Better Auth cookie in the Electron sign-in window (`tokenFromCookie`), is verified via `/api/hub/users/me` and kept in `<dataDir>/hub.json`. Endpoints: `GET /api/hub/status[?refresh]`, `POST /api/hub/token|signout`, `GET/POST /api/projects`, `POST /api/projects/import` (sheet text → new project), `POST /api/projects/:id/open`, `DELETE /api/projects/:id[?cloud=1]`, `POST /api/projects/sync`.
+- Sync = explicit, last-write-wins per project on `updatedAt`; both-changed → ours wins, theirs saved as `show.conflict-<ts>.json`, state `conflict`. Never sync automatically during a show.
+- The hub needs Surface seeded (`hasOffline: true`) and access granted — snippet in `docs/HUB.md`. `tests/hub.test.ts` runs a fake hub.
 
 ## Conventions
 
