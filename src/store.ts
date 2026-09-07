@@ -21,6 +21,7 @@ interface S {
   doc: ShowDoc | null; cues: Cue[]; state: RunnerState | null; health: Health | null; intake: IntakeView | null; log: string[]; socket: Socket | null; error: string | null;
   transcode: { running: boolean; progress: Record<string, { phase: string; pct?: number; detail?: string }>; result?: any };
   hub: HubStatus | null; projects: ProjectsView | null; lastSync: SyncResult | null; hubBusy: string | null;
+  drawer: string | null; setDrawer(d: string | null): void; selected: { row: string; cell: BoardCell } | null; select(sel: { row: string; cell: BoardCell } | null): void;
   board: Board | null; mode: "prepare" | "run"; prepare: { phase: string; detail?: string; dir?: string } | null; versions: { file: string; at: string; diff: string[] }[]; build: { engine: string; done: number; total: number } | null;
   loadBoard(): Promise<void>; setMode(m: "prepare" | "run"): void; runPrepare(dir: string, deleteOriginals: boolean): Promise<void>; dropSheet(text: string, file: string): Promise<string[]>; buildResolume(): Promise<string>; requestText(): Promise<string>;
   loadHub(refresh?: boolean): Promise<void>; signIn(): Promise<void>; signOut(): Promise<void>; syncProjects(): Promise<void>;
@@ -33,6 +34,7 @@ interface S {
 export const useStore = create<S>((set, get) => ({
   doc: null, cues: [], state: null, health: null, intake: null, log: [], socket: null, error: null, transcode: { running: false, progress: {} },
   hub: null, projects: null, lastSync: null, hubBusy: null,
+  drawer: null, setDrawer(d) { set({ drawer: d }); }, selected: null, select(sel) { set({ selected: sel }); },
   board: null, mode: (localStorage.getItem("surface.mode") as any) || "prepare", prepare: null, versions: [], build: null,
   async loadBoard() { try { const [board, versions] = await Promise.all([j<Board>("/api/board"), j<any[]>("/api/versions")]); set({ board, versions }); } catch {} },
   setMode(m) { localStorage.setItem("surface.mode", m); set({ mode: m }); },

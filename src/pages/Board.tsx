@@ -15,21 +15,30 @@ function ScreenDots({ slots, screens }: { slots: BoardSlot[]; screens: string[] 
   return <span className="scr">{screens.map((id) => { const s = slots.find((x) => x.screen === id); return <i key={id} className={!s ? "n" : s.status === "ready" ? "" : s.status === "convert" ? "w" : "x"} title={`${id}${s ? ` — ${s.status}${s.note ? `: ${s.note}` : ""}` : " — not on this screen"}`} />; })}</span>;
 }
 
-function Cell({ cell, screens, tone, onFire, live }: { cell: BoardCell; screens: string[]; tone: string; onFire?: (n: number) => void; live?: boolean }) {
-  const { mode } = useStore(); const run = mode === "run";
-  const [open, setOpen] = useState(false);
-  const fire = () => { if (run && cell.cues[0]) onFire?.(cell.cues[0].n); else setOpen((o) => !o); };
+function Cell({ cell, row, screens, tone, onFire, live }: { cell: BoardCell; row: string; screens: string[]; tone: string; onFire?: (n: number) => void; live?: boolean }) {
+  const { mode, selected, select } = useStore(); const run = mode === "run";
+  const isSel = !run && selected?.row === row && selected.cell.key === cell.key;
+  const click = () => { if (run) { if (cell.cues[0]) onFire?.(cell.cues[0].n); } else select(isSel ? null : { row, cell }); };
   const missing = cell.status === "missing" && !cell.slots.some((s) => s.thumb);
   const dur = cell.behaviour === "loop" ? "loop" : cell.behaviour === "playHold" ? "play·hold" : cell.behaviour === "timed" ? "timed" : cell.behaviour ?? "";
   return (
-    <div className={`cell ${cell.status}${missing ? " miss" : ""}${live ? " on" : ""}`} onClick={fire} title={run ? `GO ${cell.cues[0]?.id ?? ""}` : cell.label} role={run ? "button" : undefined} tabIndex={0}>
+    <div className={`cell ${cell.status}${missing ? " miss" : ""}${live ? " on" : ""}${isSel ? " sel" : ""}`} onClick={click} title={run ? `GO ${cell.cues[0]?.id ?? ""}` : cell.label} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") click(); }}>
       {cell.thumb && !missing ? <div className="thumb img" style={{ backgroundImage: `url(${cell.thumb})` }} /> : <div className={`thumb ${tone}`}>{missing ? "not delivered" : cell.label}</div>}
       <div className="foot"><span>{missing ? cell.label : dur}</span><ScreenDots slots={cell.slots} screens={screens} /></div>
-      {open && !run && <div className="pop" onClick={(e) => e.stopPropagation()}>
-        <b>{cell.label}</b> <span className="dim">{cell.cues.map((c) => c.id).join(", ")}</span>
-        {cell.slots.map((s) => <div key={s.slot} className={`slot ${s.status}`}><span className="k">{s.screen} {s.w}×{s.h}</span><span>{s.status === "missing" ? "missing" : s.file ?? s.out}</span>{s.note && <span className="dim">{s.note}</span>}</div>)}
-        {cell.cues.length > 1 && <div className="dim" style={{ marginTop: 4 }}>{cell.cues.length} cues: {cell.cues.map((c) => c.name).join(" · ")}</div>}
-      </div>}
+    </div>
+  );
+}
+
+/** The one place details live: whatever cell is selected, in the rail. Click the cell again (or Esc) to clear it. */
+function Selected() {
+  const { selected, select, board } = useStore(); if (!selected || !board) return null;
+  const row = board.rows.find((r) => r.id === selected.row); const c = selected.cell;
+  return (
+    <div className="selpanel">
+      <h4>{row?.kind === "bout" ? `Bout ${row.order} · ${row.title}` : "Event"} <button className="x" onClick={() => select(null)} title="Clear (Esc)">×</button></h4>
+      <div className="sel-title">{c.label} <span className="dim">{c.cues.map((x) => x.id).join(", ")}</span></div>
+      {c.slots.map((s) => <div key={s.slot} className={`slot ${s.status}`}><span className="k">{s.screen} <span className="dim">{s.w}×{s.h}</span></span><span className="v">{s.status === "missing" ? "missing" : s.file ?? s.out}</span>{s.note && <span className="dim n">{s.note}</span>}</div>)}
+      {c.cues.length > 1 && <div className="dim" style={{ marginTop: 6, fontSize: 12 }}>{c.cues.length} cues: {c.cues.map((x) => x.name).join(" · ")}</div>}
     </div>
   );
 }
@@ -47,6 +56,7 @@ export function Board() {
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (board?.delivery?.dir && !dir) setDir(board.delivery.dir); }, [board?.delivery?.dir]);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 6000); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === "Escape" && !useStore.getState().drawer) useStore.getState().select(null); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, []);
   const say = (m: string) => setToast(m);
   if (!board || !doc) return <div className="dim" style={{ padding: 20 }}>Loading the card…</div>;
   const screens = board.screens.map((s) => s.id);
@@ -99,7 +109,7 @@ export function Board() {
             <tbody>
               {board.rows.map((r) => r.kind === "event" ? (
                 <tr key={r.id} className="evt"><td className="bout"><span className="ord">EVENT</span><div className="names">{r.title}</div><div className="meta">{Object.keys(r.cells).length} items</div></td>
-                  <td colSpan={board.columns.length}><div className="stack">{Object.values(r.cells).map((c) => <Cell key={c.key} cell={c} screens={screens} tone={c.key === "FLAGS" ? "t-flag" : c.key === "VTS" ? "t-vt" : "t-hold"} onFire={go} />)}</div></td></tr>
+                  <td colSpan={board.columns.length}><div className="stack">{Object.values(r.cells).map((c) => <Cell key={c.key} cell={c} row={r.id} screens={screens} tone={c.key === "FLAGS" ? "t-flag" : c.key === "VTS" ? "t-vt" : "t-hold"} onFire={go} />)}</div></td></tr>
               ) : (
                 <tr key={r.id} className={liveRow === r.id ? "live" : ""}>
                   <td className="bout"><span className="ord">{String(r.order).padStart(2, "0")}{r.meta.isMain ? " · MAIN" : r.meta.isCoMain ? " · CO-MAIN" : ""}</span>
@@ -107,12 +117,12 @@ export function Board() {
                     <div className="full">{r.red?.name} · {r.blue?.name}</div>
                     <div className="meta">{r.meta.title && <b>{r.meta.title} · </b>}{r.meta.rounds} rds{r.meta.weightClass ? ` · ${r.meta.weightClass}` : ""}{r.red?.country && r.blue?.country ? ` · ${r.red.country} v ${r.blue.country}` : ""}</div>
                     {r.flags.slice(0, 2).map((f, i) => <span key={i} className="flag" title={f}>{f.replace(/^Bout \d+: /, "")}</span>)}</td>
-                  <td><Cell cell={r.cells.WALK_RED} screens={screens} tone="t-r" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_RED.cues[0]?.n} /></td>
-                  <td><Cell cell={r.cells.WALK_BLUE} screens={screens} tone="t-b" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_BLUE.cues[0]?.n} /></td>
-                  <td><Cell cell={r.cells.TALE} screens={screens} tone="t-vs" onFire={go} live={liveRow === r.id && state?.current === r.cells.TALE.cues[0]?.n} /></td>
-                  <td><Cell cell={r.cells.UP_NEXT} screens={screens} tone="t-next" onFire={go} /></td>
+                  <td><Cell cell={r.cells.WALK_RED} row={r.id} screens={screens} tone="t-r" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_RED.cues[0]?.n} /></td>
+                  <td><Cell cell={r.cells.WALK_BLUE} row={r.id} screens={screens} tone="t-b" onFire={go} live={liveRow === r.id && state?.current === r.cells.WALK_BLUE.cues[0]?.n} /></td>
+                  <td><Cell cell={r.cells.TALE} row={r.id} screens={screens} tone="t-vs" onFire={go} live={liveRow === r.id && state?.current === r.cells.TALE.cues[0]?.n} /></td>
+                  <td><Cell cell={r.cells.UP_NEXT} row={r.id} screens={screens} tone="t-next" onFire={go} /></td>
                   <td><Rounds row={r} screens={screens} onFire={go} liveRound={liveRow === r.id ? liveRound : undefined} /></td>
-                  <td>{run ? <div className="wins">{r.cells.WINNER.cues.map((c) => <button key={c.id} className={`btn ${/RED/.test(c.id) ? "wr" : /BLUE/.test(c.id) ? "wb" : ""}`} onClick={() => go(c.n)}>{/RED/.test(c.id) ? r.red?.name : /BLUE/.test(c.id) ? r.blue?.name : "Draw"}</button>)}</div> : <Cell cell={r.cells.WINNER} screens={screens} tone="t-win" />}</td>
+                  <td>{run ? <div className="wins">{r.cells.WINNER.cues.map((c) => <button key={c.id} className={`btn ${/RED/.test(c.id) ? "wr" : /BLUE/.test(c.id) ? "wb" : ""}`} onClick={() => go(c.n)}>{/RED/.test(c.id) ? r.red?.name : /BLUE/.test(c.id) ? r.blue?.name : "Draw"}</button>)}</div> : <Cell cell={r.cells.WINNER} row={r.id} screens={screens} tone="t-win" />}</td>
                 </tr>
               ))}
             </tbody>
@@ -120,7 +130,8 @@ export function Board() {
         </div>
 
         <aside className="rail">
-          <div><h4>Screens{doc.screens.length && /placeholder/i.test(doc.review.flags.join(" ")) ? " · placeholders" : " · from PixelGrid"}</h4>
+          {!run && <Selected />}
+          <div><h4>Screens{doc.screens.length && /placeholder/i.test(doc.review.flags.join(" ")) ? " · placeholders" : ""} <button className="x" onClick={() => useStore.getState().setDrawer("Screens")} title="Screens, groups and routing">Edit</button></h4>
             {board.screens.map((s) => <div key={s.id} className="screen"><span className="id">{s.id}</span><span className={`cov ${s.total && s.ready === s.total ? "ok" : s.ready ? "w" : ""}`}>{s.ready}/{s.total}</span><span className="sz">{s.w}×{s.h}{s.name !== s.id ? ` · ${s.name}` : ""}</span><span className="bar"><i style={{ width: `${s.total ? (s.ready / s.total) * 100 : 0}%`, background: s.ready === s.total ? "var(--ok)" : "var(--warn)" }} /></span></div>)}
           </div>
           <div><h4>Missing · {board.missing.filter((m) => m.kind === "missing").length}</h4>

@@ -6,14 +6,13 @@ import { Cues } from "./pages/Cues";
 import { Media } from "./pages/Media";
 import { Health } from "./pages/Health";
 import { Hub } from "./pages/Hub";
+import { Screens } from "./pages/Screens";
 
 /** The board is the app. Everything else opens as a drawer over it. */
-const DRAWERS = ["Projects", "Card", "Cues", "Media (advanced)", "Engines"] as const;
-type Drawer = (typeof DRAWERS)[number];
+const DRAWERS = ["Projects", "Card", "Screens", "Cues", "Media", "Engines"] as const;
 
 export default function App() {
-  const { doc, cues, state, health, error, load, connect, loadHub, hub, projects, mode, setMode } = useStore();
-  const [drawer, setDrawer] = useState<Drawer | null>(null);
+  const { doc, cues, state, health, error, load, connect, loadHub, hub, projects, mode, setMode, drawer, setDrawer } = useStore();
   const [theme, setTheme] = useState<"dark" | "light" | "">(() => (localStorage.getItem("surface.theme") as any) || "");
   useEffect(() => { document.documentElement.classList.remove("dark", "light"); if (theme) document.documentElement.classList.add(theme); localStorage.setItem("surface.theme", theme); }, [theme]);
   const isDark = theme === "dark" || (!theme && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -43,7 +42,7 @@ export default function App() {
         {noBouts && !drawer && <div className="empty"><h2>Start with the promoter's sheet</h2><p>Drop the bout sheet or timing sheet anywhere on this window — the card fills in, then drop the graphics folder on it.</p><p className="dim">Or open a project from the name at the top.</p></div>}
         {doc && <Board />}
         {drawer && <div className="drawer"><div className="drawer-head"><b>{drawer}</b><button onClick={() => setDrawer(null)}>close · Esc</button></div><div className="drawer-body">
-          {drawer === "Projects" && <Hub />}{drawer === "Card" && doc && <Review />}{drawer === "Cues" && doc && <Cues />}{drawer === "Media (advanced)" && doc && <Media />}{drawer === "Engines" && <Health />}
+          {drawer === "Projects" && <Hub />}{drawer === "Card" && doc && <Review />}{drawer === "Screens" && doc && <Screens />}{drawer === "Cues" && doc && <Cues />}{drawer === "Media" && doc && <Media />}{drawer === "Engines" && <Health />}
         </div></div>}
       </main>
       <footer className="status">
