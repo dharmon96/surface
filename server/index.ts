@@ -19,7 +19,13 @@ import cors from "cors";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { readFileSync, existsSync } from "node:fs";
-import { deriveCues, loadShowDoc } from "../core/index.js";
+import { deriveCues, loadShowDoc, mediaManifest } from "../core/index.js";
+import { writeFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import { probe } from "../core/intake/intake.js";
+import { intake } from "../core/intake/match.js";
+import { planTranscodes } from "../core/intake/transcode.js";
+import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter, CompanionAdapter } from "../core/engine/adapters.js";
 import type { EngineAdapter } from "../core/engine/adapter.js";
@@ -39,7 +45,7 @@ export function buildAdapters(cfg: SurfaceConfig, getVars: () => Record<string, 
 }
 
 export async function startServer(showFile: string, cfg: SurfaceConfig) {
-  const doc = loadShowDoc(JSON.parse(readFileSync(showFile, "utf8"))); const cues = deriveCues(doc);
+  let doc = loadShowDoc(JSON.parse(readFileSync(showFile, "utf8"))); let cues = deriveCues(doc, (doc as any).pack);
   let runner: Runner; const adapters = buildAdapters(cfg, () => runner.variables());
   runner = new Runner(doc, cues, adapters);
   for (const a of adapters) await a.init(doc, cues);
@@ -48,6 +54,25 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
   runner.on((e) => io.emit(e.type, e));
 
+  // ── authoring endpoints used by the desktop UI
+  app.get("/api/doc", (_q, res) => res.json(doc));
+  app.put("/api/doc", (q, res) => { doc = loadShowDoc(q.body); cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, cues: cues.length }); });
+  app.post("/api/review/approve", (_q, res) => { doc.review.status = "approved"; writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true }); });
+  app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
+  let lastIntake: any = null;
+  app.post("/api/intake", async (q, res) => {
+    const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" });
+    const walk = (d: string): string[] => { try { return readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(mov|mp4|mxf|avi|png|jpe?g|tif|webp)$/i.test(f) ? [p] : []; }); } catch { return []; } };
+    const files = walk(dir); const probes = [];
+    for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch {} }
+    const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
+    const man = mediaManifest(doc, cues);
+    const r = intake(doc, man, probes, syn, { override: q.body?.override });
+    const jobs = planTranscodes(r.assignments, probes, man, { engine: q.body?.engine ?? "resolume", outDir: q.body?.outDir ?? join(dir, "..", "media"), deleteOriginals: false });
+    lastIntake = { dir, probes: probes.length, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
+    res.json(lastIntake);
+  });
+  app.get("/api/intake", (_q, res) => res.json(lastIntake));
   app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length }));
   app.get("/api/cues", (_q, res) => res.json(cues));
   app.get("/api/state", (_q, res) => res.json(runner.getState()));

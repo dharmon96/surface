@@ -10,7 +10,7 @@ Plan and research: see the "BoutKit Build Plan" artifact (Claude) — v3, 7 Sep 
 
 - **Core**: pure TypeScript in `core/` — no I/O except `core/gen/cuesheet.ts` (exceljs) and `core/intake` (ffprobe). Everything else is data in / data out so it can be unit-tested and reused by the CLI, the desktop app and MantaGlow.
 - **CLI**: `cli/boutkit.ts` via tsx. **Tests**: vitest (`npm test`). **Typecheck**: `npm run typecheck`.
-- Planned: `src/` React + Vite + TS UI (Radix, Tailwind, zustand), `server/` Express + Socket.IO for engine adapters and the Bridge API, Electron shell. Same single-package layout as ShowCall.
+- **UI**: `src/` React + Vite + TS (zustand, socket.io-client, plain CSS tokens in `src/styles.css`; Radix/Tailwind can be layered later). Tabs: Review (the approval gate, editable card), Cues (one row per cue, one column per surface), Media (delivery folder → probe/match/plan), Run (GO panel: Space=GO, Backspace=back, Esc=panic), Health. Dev: `npm run server -- show.json` + `npm run dev` (Vite proxies /api and /socket.io to :8090). Electron shell still to come; same single-package layout as ShowCall.
 
 ## Core model (`core/types.ts`)
 
