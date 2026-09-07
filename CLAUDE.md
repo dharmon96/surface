@@ -1,15 +1,15 @@
-# Surface — Show-Control Console for Live-Event Graphics
+# BoutKit — Show-Control Console for Live-Event Graphics
 
 Takes a show's data (first pack: a boxing bout sheet) and produces a screen-aware cue list, then builds Resolume Arena
 compositions, disguise tracks and Bitfocus Companion pages from it — or runs the cues itself. Independent desktop app;
 links to ShowCall (run of show) and PixelMapper (screens) but does not depend on MantaGlow to run.
 
-Plan and research: see the "BoutKit Build Plan" artifact in Claude (written before the rename) — v3, 7 Sep 2026.
+Plan and research: see the "BoutKit Build Plan" artifact (Claude) — v3, 7 Sep 2026.
 
 ## Tech Stack (matches ShowCall / PixelMapper conventions)
 
 - **Core**: pure TypeScript in `core/` — no I/O except `core/gen/cuesheet.ts` (exceljs) and `core/intake` (ffprobe). Everything else is data in / data out so it can be unit-tested and reused by the CLI, the desktop app and MantaGlow.
-- **CLI**: `cli/surface.ts` via tsx. **Tests**: vitest (`npm test`). **Typecheck**: `npm run typecheck`.
+- **CLI**: `cli/boutkit.ts` via tsx. **Tests**: vitest (`npm test`). **Typecheck**: `npm run typecheck`.
 - Planned: `src/` React + Vite + TS UI (Radix, Tailwind, zustand), `server/` Express + Socket.IO for engine adapters and the Bridge API, Electron shell. Same single-package layout as ShowCall.
 
 ## Core model (`core/types.ts`)
@@ -32,9 +32,20 @@ Plan and research: see the "BoutKit Build Plan" artifact in Claude (written befo
 ```bash
 npm install
 npm test
-npm run cli -- cues  fixtures/2026-06-13-glendale.bout.json
+npm run cli -- parse fixtures/text/2026-06-13-glendale-timing.txt show.json
+npm run cli -- merge show.json fixtures/text/2026-06-13-glendale-timing.txt   # later version → diff
+npm run cli -- cues  show.json
 npm run cli -- build fixtures/2026-06-13-glendale.bout.json out --mode bridge
 ```
+
+## Parsers (`core/parse/`)
+
+- `detectKind` → `timing_sheet` | `bout_sheet` | `rundown`. Input is `pdftotext -layout` text (the CLI shells out to pdftotext for PDFs).
+- `timing-sheet.ts`: bout blocks with Walk/First Bell/Final Bell/Walk Out/READY BY, stacked TITLE column, corner side and walk/intro order read from the column header, `DAZN FEED:` marks broadcast start.
+- `bout-sheet.ts`: 4-line blocks (heading / names / hometowns / records); corner side ONLY from the RED/BLUE CORNER header; sheets list the main event first so running order is reversed (flagged).
+- `rundown.ts`: TV running order; columns sliced by page geometry (gutters = cuts no word crosses, nearest the midpoint between header words). VT / FF GFX / MC rows become `origin: "rundown"` custom cue candidates.
+- `geo.ts`: hometown → ISO country with confidence; men's weight-class limits for suggestions; record parser. Everything inferred goes to `review.flags`.
+- `mergeSheets(base, incoming)`: later versions merge by fighter name / red-blue pair and return a human diff; fighter ids never change.
 
 ## Conventions
 
