@@ -14,6 +14,8 @@ export interface VenueScreen { id: string; name: string; w: number; h: number; v
 interface VenueData { screens: VenueScreen[]; current: number | null; bout: string | null; round: number | null }
 const LAYERS = ["BASE", "OVERLAY", "FULL"] as const;
 const isVideo = (u: string) => /\.(mov|mp4|mxf|avi|webm)(\?|$)/i.test(decodeURIComponent(u));
+const building = (u: string | null) => !!u && u.startsWith("building:");
+const thumbFor = (u: string) => `/api/thumb?f=${u.replace(/^building:\/api\/proxy\?f=/, "")}`;
 
 /** One screen's live stack as DOM media (also the texture source for 3D). */
 function Stack({ s, showTest, onEl }: { s: VenueScreen; showTest: boolean; onEl?: (id: string, els: HTMLElement[]) => void }) {
@@ -23,7 +25,9 @@ function Stack({ s, showTest, onEl }: { s: VenueScreen; showTest: boolean; onEl?
   return (
     <div className="stack" style={{ aspectRatio: `${s.w} / ${s.h}` }}>
       {idle && showTest && s.testPattern && <img src={s.testPattern} alt="" className="layer" style={{ opacity: .35 }} />}
-      {LAYERS.map((l) => { const u = s.layers[l].url; if (!u) return null; return isVideo(u)
+      {LAYERS.map((l) => { const u = s.layers[l].url; if (!u) return null;
+        if (building(u)) return <img key={u} ref={(e) => { refs.current[l] = e; }} src={thumbFor(u)} className="layer" alt="" crossOrigin="anonymous" title="preview proxy being made" />; // a frame until the proxy is ready
+        return isVideo(u)
         ? <video key={u} ref={(e) => { refs.current[l] = e; }} src={u} className="layer" autoPlay muted loop playsInline crossOrigin="anonymous" />
         : <img key={u} ref={(e) => { refs.current[l] = e; }} src={u} className="layer" alt="" crossOrigin="anonymous" />; })}
       {idle && <div className="idle">{s.id}</div>}
@@ -85,6 +89,10 @@ export function Venue({ big }: { big?: boolean }) {
   const els = useRef<Record<string, HTMLElement[]>>({});
   const reload = () => fetch("/api/venue").then((r) => r.json()).then(setData).catch(() => {});
   useEffect(() => { reload(); }, [state?.current, state?.firedAt, state?.timers]);
+  // proxies build in the background: poll while any layer is still waiting on one, and refresh when the server says one finished
+  const pending = !!data?.screens.some((s) => LAYERS.some((l) => building(s.layers[l].url)));
+  useEffect(() => { if (!pending) return; const t = setInterval(reload, 2000); return () => clearInterval(t); }, [pending]);
+  useEffect(() => { const sock = useStore.getState().socket; if (!sock) return; sock.on("proxy", reload); return () => { sock.off("proxy", reload); }; }, []);
   useEffect(() => { localStorage.setItem("surface.venue", view); }, [view]);
   if (!data) return <div className="dim">loading the venue…</div>;
   const onEl = (id: string, list: HTMLElement[]) => { els.current[id] = list; };

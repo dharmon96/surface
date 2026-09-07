@@ -45,6 +45,7 @@ import { parseSheet } from "../core/parse/index.js";
 import { HubClient, HUB_URL } from "../core/hub/client.js";
 import { ProjectStore, blankShowDoc, type HubState } from "./projects.js";
 import { buildBoard, promoterRequest } from "./board.js";
+import { ProxyStore } from "./proxy.js";
 import { mergeSheets } from "../core/parse/index.js";
 import { resolumePlan } from "../core/gen/engines.js";
 import { execFile } from "node:child_process";
@@ -103,6 +104,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
   runner.on((e) => io.emit(e.type, e));
 
+  const proxies = new ProxyStore(join(cfg.dataDir ?? tmpdir(), "surface-proxies"));
   /** Where this project's converted media lives: set by the first Prepare, else beside the project file. */
   const mediaRootOf = () => doc.mediaRoot ?? lastIntake?.mediaDir ?? join(dirname(showFile), "media");
   /** After a conversion run: remember slot → file so every cue (and every engine build) points at the converted media. */
@@ -111,6 +113,8 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     const man: { slot: string; outputs: string[] }[] = JSON.parse(readFileSync(mp, "utf8")); const media = { ...(doc.media ?? {}) };
     for (const m of man) if (m.outputs?.[0]) media[m.slot] = relative(mediaDir, m.outputs[0]).replace(/\\/g, "/");
     setShow({ ...doc, mediaRoot: doc.mediaRoot ?? mediaDir, media });
+    // preview proxies in the background so the Venue view never waits at show time
+    void proxies.warm(man.map((m) => m.outputs?.[0]).filter(Boolean), () => io.emit("proxy", { type: "proxy" }));
   };
   /** Replace the live show: re-derive cues, restart the runner, persist (to the project when one is open). */
   const setShow = (next: ShowDoc, file = showFile, id = activeId) => {
@@ -214,6 +218,12 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   });
   // ── the Card Board itself, the promoter request, thumbnails
   const thumbDir = join(cfg.dataDir ?? tmpdir(), "surface-thumbs"); mkdirSync(thumbDir, { recursive: true });
+  /** preview proxy for any file (HAP / DXV / NotchLC / ProRes → small H.264, alpha → VP9 webm); 202 while it is being built */
+  app.get("/api/proxy", async (q, res) => {
+    const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end();
+    const p = proxies.pathFor(f); if (p.ready) return res.set("Cache-Control", "private, max-age=3600").sendFile(p.path, { acceptRanges: true });
+    void proxies.build(f); res.status(202).json({ building: true });
+  });
   const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
   const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl });
   app.get("/api/board", (_q, res) => res.json(board()));
@@ -235,7 +245,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.get("/api/media", (q, res) => { const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end(); res.set("Cache-Control", "private, max-age=3600").sendFile(f, { acceptRanges: true }); });
   app.get("/api/venue", (_q, res) => {
     const screens = autoVenue(doc.screens, doc.surfaces); const root = mediaRootOf();
-    const url = (slot: string | null) => { const rel = slot ? doc.media?.[slot] : undefined; return rel && existsSync(join(root, rel)) ? `/api/media?f=${encodeURIComponent(join(root, rel))}` : null; };
+    const url = (slot: string | null) => { const rel = slot ? doc.media?.[slot] : undefined; if (!rel || !existsSync(join(root, rel))) return null; const abs = join(root, rel); const p = proxies.pathFor(abs); if (!p.ready) void proxies.build(abs); return p.still ? `/api/media?f=${encodeURIComponent(abs)}` : p.ready ? `/api/proxy?f=${encodeURIComponent(abs)}` : `building:/api/proxy?f=${encodeURIComponent(abs)}`; };
     const st = runner.getState();
     // the runner tracks one slot per surface layer; a surface with several screens has one file per screen, named by that screen
     const forScreen = (slot: string | null, sc: { id: string; w: number; h: number }, sf?: { screens: string[] }) => { if (!slot) return null; for (const id of sf?.screens ?? []) { const o = doc.screens.find((x) => x.id === id); const tail = o ? `_${o.id}_${o.w}x${o.h}` : ""; if (tail && slot.endsWith(tail)) return slot.slice(0, -tail.length) + `_${sc.id}_${sc.w}x${sc.h}`; } return slot; };
