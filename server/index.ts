@@ -230,10 +230,11 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
       r = intake(doc, man, probes, syn, opts);
     }
     const jobs = planTranscodes(r.assignments, probes, man, { engine: o.engine ?? "resolume", outDir: mediaDirFor(dir, o.outDir) });
-    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan: last.ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: [...r.ignored, ...unreadable], unfilled: r.unfilled, issues: r.issues, jobs };
+    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan: last.ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: [...r.ignored, ...unreadable], unfilled: r.unfilled, issues: r.issues, lost: r.lost, files: probes.map((p) => ({ file: p.file, w: p.w, h: p.h, still: p.still, durationSec: p.durationSec })), jobs };
     // every delivery-level inference lands in review.flags (and, typed, in review.items) — replaced per run, sheet items untouched
     const marker = "Delivery: ";
     const d = deliveryItems(r, doc, opts, unreadable);
+    if (r.lost.length) d.flags.push(`${marker}${r.lost.length} graphic(s) you placed by hand no longer have their file — see the board`);
     const kept = doc.review.flags.filter((f) => !f.startsWith(marker)); const keptItems = (doc.review.items ?? []).filter((i) => i.source !== "delivery");
     doc.review = { ...doc.review, flags: [...kept, ...d.flags], items: [...keptItems, ...d.items] };
     doc.delivery = { dir, at: new Date().toISOString() };
@@ -283,6 +284,43 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
   const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: mediaRootOf(), thumbUrl, deck: deck(doc) });
   app.get("/api/board", (_q, res) => res.json(board()));
+  // ── placing a file by hand: drag it from the tray onto the graphic it belongs to
+  /** re-match from the cached probes (no ffprobe, no OCR) so the board is right the moment something is placed */
+  const rematch = async () => { if (last) { try { await matchAndPlan(last.opts); } catch {} } };
+  app.post("/api/place", guard(async (q, res) => {
+    if (!last) return res.status(409).json({ error: "read the promoter's folder first" });
+    if (transcodeRun.running) return res.status(409).json({ error: "wait for the conversion to finish" });
+    const file: string = q.body?.file; const slots: string[] = q.body?.slots;
+    if (!file || !Array.isArray(slots) || !slots.length) return res.status(400).json({ error: "file and slots[] required" });
+    // store the walker's own spelling of the path (Windows cases differ from what a drag reports)
+    const p = last.probes.find((x) => x.file === file) ?? last.probes.find((x) => x.file.toLowerCase() === file.toLowerCase());
+    if (!p) return res.status(404).json({ error: "that file is not in the delivery folder" });
+    const known = new Set(mediaManifest(doc, cues).map((m) => m.slot)); const bad = slots.filter((s) => !known.has(s));
+    if (bad.length) return res.status(400).json({ error: `no such graphic on the card: ${bad.join(", ")}` });
+    const at = new Date().toISOString(); const placements = { ...(doc.placements ?? {}) };
+    for (const s of slots) placements[s] = { file: p.file, origin: "operator", at };
+    setShow({ ...doc, placements }); await rematch();
+    res.json({ ok: true, placed: slots.length, convert: lastIntake?.jobs.filter((j: any) => slots.includes(j.slot) && j.action !== "copy").length ?? 0 });
+  }));
+  app.delete("/api/place", guard(async (q, res) => {
+    if (transcodeRun.running) return res.status(409).json({ error: "wait for the conversion to finish" });
+    const slots: string[] = q.body?.slots; if (!Array.isArray(slots) || !slots.length) return res.status(400).json({ error: "slots[] required" });
+    const placements = { ...(doc.placements ?? {}) }; let cleared = 0;
+    for (const s of slots) if (placements[s]) { delete placements[s]; cleared++; }
+    if (cleared) { setShow({ ...doc, placements }); await rematch(); }
+    res.json({ ok: true, cleared });
+  }));
+  /** every file in the folder, for the "swap file" picker */
+  app.get("/api/delivery", (_q, res) => {
+    if (!last || !lastIntake) return res.status(404).json({ error: "no folder read yet" });
+    const on = new Map<string, string[]>();
+    for (const a of lastIntake.assignments) { const l = on.get(a.file) ?? []; l.push(a.slot); on.set(a.file, l); }
+    const placed = new Set(Object.values(doc.placements ?? {}).map((p) => p.file));
+    const files = last.probes.map((p) => { const parts = p.file.split("/"); const name = parts.pop()!;
+      return { file: p.file, name, folder: parts.join(" / "), thumb: thumbUrl(join(last!.dir, p.file)), w: p.w, h: p.h, still: p.still, durationSec: p.durationSec, on: on.get(p.file) ?? [], placed: placed.has(p.file) };
+    }).sort((a, b) => (a.folder + a.name).localeCompare(b.folder + b.name));
+    res.json({ dir: last.dir, files });
+  });
   app.get("/api/board/request", (_q, res) => res.type("text/plain").send(promoterRequest(board(), doc)));
   app.get("/api/thumb", guard(async (q, res) => {
     const f = String(q.query.f ?? ""); if (!allowedFile(f) || !existsSync(f)) return res.status(404).end();

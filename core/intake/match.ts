@@ -10,7 +10,9 @@ import { resolveScheme, sheetBout, sheetSide, fightersNamed, type Scheme } from 
 import { applyOcr, type OcrResult } from "./ocr.js";
 import { fighterSide } from "../review.js";
 
-export interface Assignment { slot: string; file: string; confidence: number; reasons: string[]; issues: string[]; update?: boolean }
+export interface Assignment { slot: string; file: string; confidence: number; reasons: string[]; issues: string[]; update?: boolean; /** the operator put this file here by hand */ origin?: "operator" }
+/** slot → the delivery file the operator placed there (what doc.placements holds, flattened) */
+export const placementsOf = (doc: ShowDoc): Record<string, string> => Object.fromEntries(Object.entries(doc.placements ?? {}).map(([s, p]) => [s, p.file]));
 export interface IntakeResult {
   scheme: Scheme;
   assignments: Assignment[];                     // one per filled slot (best file wins)
@@ -19,6 +21,8 @@ export interface IntakeResult {
   unfilled: string[];                            // manifest slots with no file
   issues: string[];                              // delivery-level problems (folder/file disagreements, count mismatches)
   files: FileEvidence[];                         // every file's evidence (the confirm cards read sizes and words from here)
+  /** placements that could not be honoured — reported, never silently dropped */
+  lost: { slot: string; file: string; why: "file gone" | "slot gone" }[];
 }
 
 type Slot = ReturnType<typeof mediaManifest>[number];
@@ -39,8 +43,10 @@ function slotParts(slot: Slot) {
 export interface IntakeOptions {
   override?: Partial<Pick<Scheme, "direction" | "aIs">>;
   ocr?: Record<string, OcrResult>;
-  /** operator placements by delivery-relative path ("/" separators) — beat every inference */
+  /** answers about a file, keyed by its delivery-relative path — beat every inference */
   assign?: Record<string, { fighter?: string; variant?: string; slot?: string; ok?: boolean; skip?: boolean }>;
+  /** graphics the operator placed by hand, keyed by slot. Default: the doc's own; pass {} to ignore them. */
+  placements?: Record<string, string>;
 }
 
 export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: ScreenSynonyms, opts: IntakeOptions = {}): IntakeResult {
@@ -51,11 +57,24 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
   if (opts.override?.aIs) { scheme.aIs = opts.override.aIs; scheme.evidence.push(`a = ${scheme.aIs} set by operator`); }
   const N = doc.data.bouts.length; const bouts = [...doc.data.bouts].sort((a: any, b: any) => a.order - b.order);
   const parsed = manifest.map((s) => ({ s, p: slotParts(s) })).filter((x) => x.p);
-  const result: IntakeResult = { scheme, assignments: [], unmatched: [], ignored: [], unfilled: [], issues: [], files };
+  const result: IntakeResult = { scheme, assignments: [], unmatched: [], ignored: [], unfilled: [], issues: [], files, lost: [] };
   if (scheme.boutCountMatches === false) result.issues.push(scheme.evidence.find((e) => /but sheet has/.test(e))!);
   const best = new Map<string, Assignment>();
 
+  // what the operator placed by hand comes first: it is the answer, not a candidate, and that file is out of the running elsewhere
+  const placements = opts.placements ?? placementsOf(doc);
+  const bySlot = new Map(manifest.map((m) => [m.slot, m])); const taken = new Set<string>();
+  for (const [slot, file] of Object.entries(placements)) {
+    const m = bySlot.get(slot); const p = byPath.get(file);
+    if (!m) { result.lost.push({ slot, file, why: "slot gone" }); result.issues.push(`${slot}: you placed '${file}' here but this graphic is no longer on the card (bout or screen changed?)`); continue; }
+    if (!p) { result.lost.push({ slot, file, why: "file gone" }); result.issues.push(`${slot}: you placed '${file}' here but it is not in the folder any more`); continue; }
+    const issues = p.w === m.w && p.h === m.h ? [] : [`file is ${p.w}x${p.h}, slot wants ${m.w}x${m.h} — will scale`];
+    best.set(slot, { slot, file, confidence: 1, reasons: ["placed by you"], issues, origin: "operator" });
+    if (slotParts(m)?.graphic !== "ROUND") taken.add(file);   // an event-wide round card may still serve every other bout
+  }
+
   for (const ev of files) {
+    if (taken.has(ev.file)) continue;
     if (ev.ignored) { result.ignored.push({ file: ev.file, why: ev.ignored }); continue; }
     const dec = opts.assign?.[ev.file];
     if (dec?.skip) { result.ignored.push({ file: ev.file, why: "left out by you" }); continue; }
@@ -94,6 +113,10 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
       if (graphic === "WALKOUT" || graphic === "FIGHTER" || graphic === "WINNER") return side ? p!.variant === side.toUpperCase() : false;
       return false;
     });
+    // a slot the operator filled by hand is not up for grabs; a file whose every home is taken says so instead of vanishing
+    const openCands = cands.filter((c) => best.get(c.s.slot)?.origin !== "operator");
+    if (cands.length && !openCands.length) { result.unmatched.push({ file: ev.file, evidence: ev, why: "its place on the card is taken by a file you placed", candidates: scr.candidates }); continue; }
+    cands.length = 0; cands.push(...openCands);
     // a placement made by hand (drag to a slot) beats everything
     if (dec?.slot) { const one = parsed.find((x) => x.s.slot === dec.slot); cands.length = 0; if (one) cands.push(one); reasons.push("placed by you"); }
     // a VT tied to a bout (fight open) beats the event-wide VT slots when both are candidates
@@ -117,6 +140,7 @@ export function intake(doc: ShowDoc, manifest: Slot[], probes: Probe[], syn: Scr
     for (const c of shared ? cands : firstPerScreen) {
       const a: Assignment = { slot: c.s.slot, file: ev.file, confidence: conf, reasons, issues, update: ev.update };
       const cur = best.get(a.slot);
+      if (cur?.origin === "operator") continue;                                      // the shared round-card path reaches every bout's slot — placements stay
       if (!cur || (a.update && !cur.update) || (a.update === cur.update && a.confidence > cur.confidence)) { if (cur) result.issues.push(`${a.slot}: '${cur.file}' replaced by '${a.file}' (${a.update ? "update folder" : "higher confidence"})`); best.set(a.slot, a); }
       else result.issues.push(`${a.slot}: duplicate candidate '${a.file}' kept out (existing '${cur.file}')`);
     }

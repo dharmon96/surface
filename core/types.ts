@@ -110,6 +110,8 @@ export interface ShowDoc {
   decisions?: Record<string, Decision>;
   /** the promoter's folder the last Prepare read — cards, thumbnails and re-match survive a restart */
   delivery?: { dir: string; at: string };
+  /** graphics the operator placed by hand (dragged onto a cell): slot → the delivery file. Beats every inference. */
+  placements?: Record<string, Placement>;
   /** every sheet version merged in, newest last, with the human diff */
   versions?: { file: string; at: string; diff: string[] }[];
   /** how the engine composition is laid out — see core/engine/adapter.ts.
@@ -171,6 +173,9 @@ export interface ConfirmItem {
   covers?: string[];          // other flag sentences this card answers (main covers the co-main line)
   data?: Record<string, any>; // kind payload for applyDecision — always "set to", never "toggle"
 }
+/** A file the operator put on a graphic by hand (drag, swap). Beats every inference; honoured on every later read of the folder. */
+export interface Placement { file: string /* delivery-relative, forward slashes */; origin: "operator"; at: string }
+
 export interface Decision { kind: ConfirmKind; value: any; at: string; text: string /* human line: "Left = BLUE · right = RED" */; was?: any /* the suggested option id at answer time, for forget */ }
 
 export interface Pack {

@@ -102,3 +102,53 @@ describe("Confirm deck", () => {
     expect(back.answered.some((a: any) => a.key === "main")).toBe(false);
   });
 });
+
+// a two-file delivery built with ffmpeg, so placing a file can be exercised end to end
+import { mkdtempSync as mkTmp, rmSync } from "node:fs"; import { execFileSync } from "node:child_process";
+const del = mkdtempSync(join(tmpdir(), "surface-del-"));
+describe("placing a file by hand", () => {
+  it("reads a folder, shows what it could not place, and takes the operator's answer", async () => {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(del, "Walkouts", "8a"), { recursive: true }); mkdirSync(join(del, "Holding"), { recursive: true });
+    execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=0x203040:size=1920x1080:rate=30", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", join(del, "Walkouts", "8a", "walk.mov")], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=0x402030:size=3840x1080", "-frames:v", "1", join(del, "Holding", "hold.png")], { stdio: "ignore" });
+
+    const p = await (await fetch(`${base}/api/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dir: del, convert: false, ocr: false }) })).json();
+    expect(p.ok).toBe(true);
+
+    // both files land in the tray, each with a reason in the operator's words and a thumbnail the server will serve
+    const b = await (await fetch(`${base}/api/board`)).json();
+    expect(b.tray.length).toBeGreaterThanOrEqual(2);
+    const hold = b.tray.find((t: any) => t.name === "hold.png")!;
+    expect(hold.why).toMatch(/Which hold\?/); expect(hold.thumb).toMatch(/^\/api\/thumb\?f=/);
+    expect((await fetch(`${base}${hold.thumb}`)).status).toBe(200);
+    expect(b.rows.every((r: any) => Object.values(r.cells).every((c: any) => c.slots.every((s: any) => s.cue)))).toBe(true);
+
+    // place the hold on the sponsor loop's main-wall slot: it becomes ready (a PNG needs no conversion) and leaves the tray
+    const slot = b.rows[0].cells["EVT.HOLD_SPONSOR"].slots.find((s: any) => s.screen === "MAIN").slot;
+    const r = await (await fetch(`${base}/api/place`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: "Holding/hold.png", slots: [slot] }) })).json();
+    expect(r).toMatchObject({ ok: true, placed: 1 });
+    const b2 = await (await fetch(`${base}/api/board`)).json();
+    const placed = b2.rows[0].cells["EVT.HOLD_SPONSOR"].slots.find((s: any) => s.slot === slot);
+    expect(placed).toMatchObject({ status: "ready", origin: "operator", file: "Holding/hold.png" });
+    expect(b2.totals.placed).toBe(1);
+    expect(b2.tray.some((t: any) => t.name === "hold.png")).toBe(false);
+    expect((await (await fetch(`${base}/api/doc`)).json()).placements[slot].origin).toBe("operator");
+
+    // the picker lists every file in the folder and says where each one is used
+    const d = await (await fetch(`${base}/api/delivery`)).json();
+    expect(d.files.length).toBe(2);
+    expect(d.files.find((f: any) => f.name === "hold.png")).toMatchObject({ placed: true, w: 3840, h: 1080 });
+
+    // undo puts it back to what Surface found on its own
+    const u = await (await fetch(`${base}/api/place`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slots: [slot] }) })).json();
+    expect(u).toMatchObject({ ok: true, cleared: 1 });
+    const b3 = await (await fetch(`${base}/api/board`)).json();
+    expect(b3.rows[0].cells["EVT.HOLD_SPONSOR"].slots.find((s: any) => s.slot === slot).origin).toBeUndefined();
+    expect(b3.tray.some((t: any) => t.name === "hold.png")).toBe(true);
+  }, 120_000);
+  it("refuses a file it has never seen and a graphic that is not on the card", async () => {
+    expect((await fetch(`${base}/api/place`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: "ghost.mov", slots: ["EVT_TEST_MAIN_3840x1080"] }) })).status).toBe(404);
+    expect((await fetch(`${base}/api/place`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: "Holding/hold.png", slots: ["NOPE_X"] }) })).status).toBe(400);
+  });
+});
