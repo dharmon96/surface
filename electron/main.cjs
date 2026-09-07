@@ -101,9 +101,9 @@ ipcMain.handle("open-output", (_ev, { id, displayId, w, h }) => {
 });
 ipcMain.handle("close-output", (_ev, id) => { const w = outputWins.get(id); if (w) w.close(); return { ok: true }; });
 ipcMain.handle("open-outputs", () => [...outputWins.keys()]);
-screen.on("display-removed", () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); });
-screen.on("display-added", () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); });
-app.whenReady().then(createWindow);
+// the screen module only exists after "ready": tell the console when a display comes or goes
+const displaysChanged = () => { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed() && !w.isKiosk()) w.webContents.send("displays-changed", displays()); };
+app.whenReady().then(() => { screen.on("display-added", displaysChanged); screen.on("display-removed", displaysChanged); return createWindow(); });
 app.on("window-all-closed", () => { serverProc?.kill(); app.quit(); });
 // closing the console closes every output with it
 app.on("browser-window-closed", () => { const main = BrowserWindow.getAllWindows().find((w) => !w.isKiosk()); if (!main) for (const w of outputWins.values()) if (!w.isDestroyed()) w.close(); });

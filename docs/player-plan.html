@@ -1,0 +1,138 @@
+<title>Surface Player</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: oklch(0.985 0.006 80); --card: oklch(1 0 0); --ink: oklch(0.22 0.02 60); --muted: oklch(0.5 0.02 65); --line: oklch(0.9 0.012 80); --line-strong: oklch(0.82 0.015 78);
+    --amber: oklch(0.72 0.16 70); --amber-ink: oklch(0.45 0.13 65); --amber-soft: oklch(0.72 0.16 70 / .14);
+    --ok: oklch(0.6 0.14 160); --ok-soft: oklch(0.6 0.14 160 / .14); --warn: oklch(0.68 0.15 60); --warn-soft: oklch(0.68 0.15 60 / .16); --plan: oklch(0.55 0.05 250); --plan-soft: oklch(0.55 0.05 250 / .12);
+    --code: oklch(0.96 0.008 80); --sans: "Instrument Sans", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper: oklch(0.17 0.012 60); --card: oklch(0.21 0.014 60); --ink: oklch(0.93 0.01 80); --muted: oklch(0.66 0.02 70); --line: oklch(0.29 0.014 60); --line-strong: oklch(0.38 0.016 60);
+    --amber-ink: oklch(0.8 0.14 75); --amber-soft: oklch(0.72 0.16 70 / .18); --ok-soft: oklch(0.6 0.14 160 / .2); --warn-soft: oklch(0.68 0.15 60 / .2); --plan: oklch(0.72 0.05 250); --plan-soft: oklch(0.6 0.05 250 / .2); --code: oklch(0.24 0.014 60);
+  } }
+  :root[data-theme="dark"] {
+    --paper: oklch(0.17 0.012 60); --card: oklch(0.21 0.014 60); --ink: oklch(0.93 0.01 80); --muted: oklch(0.66 0.02 70); --line: oklch(0.29 0.014 60); --line-strong: oklch(0.38 0.016 60);
+    --amber-ink: oklch(0.8 0.14 75); --amber-soft: oklch(0.72 0.16 70 / .18); --ok-soft: oklch(0.6 0.14 160 / .2); --warn-soft: oklch(0.68 0.15 60 / .2); --plan: oklch(0.72 0.05 250); --plan-soft: oklch(0.6 0.05 250 / .2); --code: oklch(0.24 0.014 60);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .wrap { display: grid; grid-template-columns: 200px minmax(0, 72ch); gap: 48px; max-width: 1080px; margin: 0 auto; padding: 48px 28px 96px; }
+  @media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; } nav.toc { position: static !important; display: flex; flex-wrap: wrap; gap: 4px 14px; } }
+  nav.toc { position: sticky; top: 24px; align-self: start; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+  nav.toc .eyebrow { margin-bottom: 6px; }
+  nav.toc a { color: var(--muted); text-decoration: none; padding: 2px 0; } nav.toc a:hover, nav.toc a:focus-visible { color: var(--amber-ink); outline: none; }
+  .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: 40px; line-height: 1.05; font-weight: 700; letter-spacing: -.02em; margin: 6px 0 14px; text-wrap: balance; }
+  h1 small { display: block; font-size: 18px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-top: 8px; }
+  h2 { font-size: 22px; font-weight: 600; letter-spacing: -.01em; margin: 56px 0 12px; padding-top: 20px; border-top: 1px solid var(--line); text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 600; margin: 24px 0 6px; }
+  p { margin: 0 0 14px; } p.lede { font-size: 18px; color: var(--ink); }
+  a { color: var(--amber-ink); }
+  code { font-family: var(--mono); font-size: .86em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0 8px; }
+  .mode { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--card); }
+  .mode b { display: block; font-size: 15px; margin-bottom: 4px; } .mode b span { color: var(--amber-ink); } .mode p { margin: 0; font-size: 14px; color: var(--muted); }
+  .tablewrap { overflow-x: auto; margin: 14px 0 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; } th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; } th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; } tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.done { background: var(--ok-soft); color: var(--ok); } .pill.part { background: var(--warn-soft); color: var(--warn); } .pill.plan { background: var(--plan-soft); color: var(--plan); }
+  dl.fits { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 16px; font-size: 15px; } dl.fits dt { font-family: var(--mono); font-size: 13px; color: var(--amber-ink); padding-top: 2px; } dl.fits dd { margin: 0; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 16px 0; display: flex; flex-direction: column; gap: 10px; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 32px 1fr; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  ol.steps li::before { content: counter(s); font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--amber-ink); background: var(--amber-soft); width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+  ol.steps li b { display: block; margin-bottom: 2px; } ol.steps li p { margin: 0; font-size: 14.5px; color: var(--ink); }
+  .rule { margin: 18px 0; padding: 12px 16px; border-left: 3px solid var(--amber); background: var(--amber-soft); border-radius: 0 8px 8px 0; font-weight: 500; }
+  .chain { font-family: var(--mono); font-size: 13px; line-height: 1.7; background: var(--code); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 10px 0 16px; white-space: nowrap; }
+  .chain span { color: var(--amber-ink); }
+  ul.plain { padding-left: 18px; margin: 8px 0 14px; } ul.plain li { margin-bottom: 6px; }
+  .console { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+  .console div { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--card); font-size: 13.5px; } .console div b { display: block; font-size: 14px; margin-bottom: 4px; }
+  @media (max-width: 700px) { .console { grid-template-columns: 1fr 1fr; } .modes { grid-template-columns: 1fr; } }
+  .targets { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .stamp { font-size: 13px; color: var(--muted); margin-top: 4px; }
+</style>
+<div class="wrap">
+  <nav class="toc">
+    <div class="eyebrow">Contents</div>
+    <a href="#today">What ships today</a><a href="#outputs">Outputs</a><a href="#renderer">The renderer</a><a href="#audio">Audio</a><a href="#decks">Stream Decks</a><a href="#console">A console</a><a href="#order">Order of work</a>
+  </nav>
+  <main>
+    <div class="eyebrow">MantaGlow · Surface · architecture</div>
+    <h1>Surface Player<small>Playing the show from the console PC, straight onto the LED processors — and how we get there from what runs today.</small></h1>
+    <p class="stamp">September 2026 · source of truth is <code>docs/PLAYER.md</code> in the repo</p>
+
+    <p class="lede">Surface started as the thing that <em>prepares</em> a fight night for Resolume or disguise. This is the plan for the other half: Surface playing the show itself, straight onto the PC's outputs, the way Resolume's Advanced Output does — minus the mapping step, because PixelGrid already knows where every screen sits in every processor canvas.</p>
+    <p>The two roles share one show document, one card board, one cue list, one media folder. The operator never chooses a "mode"; they choose an engine. A venue can run both at once — Play for the ribbon and IMAGs, Feed for a disguise-driven main wall — because every cue is scoped by surface.</p>
+    <div class="modes">
+      <div class="mode"><b><span>Feed</span> — an engine is the playback</b><p>Surface converts the delivery, builds Resolume or disguise, fires cues over REST, previews with small proxies. What ships today.</p></div>
+      <div class="mode"><b><span>Play</span> — Surface is the playback</b><p>Its own renderer draws every canvas onto the PC's displays. Same runner, same cues; the engine adapter happens to be us.</p></div>
+    </div>
+
+    <h2 id="today">What ships today</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Piece</th><th>Where</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Media intake, matching, conversion to DXV / HAP / PNG</td><td><code>core/intake/</code></td><td><span class="pill done">done</span></td></tr>
+        <tr><td>Level matching — EBU R128 measure, one static gain per clip</td><td><code>core/intake/loudness.ts</code>, <code>execute.ts</code></td><td><span class="pill done">done</span></td></tr>
+        <tr><td>Resolume build over REST, both layouts (per-screen / together)</td><td><code>core/engine/adapters.ts</code>, <code>core/gen/engines.ts</code></td><td><span class="pill part">needs a live box</span></td></tr>
+        <tr><td>Companion actions, disguise cue tables</td><td><code>core/gen/</code></td><td><span class="pill done">done</span></td></tr>
+        <tr><td>Preview proxies (H.264 / VP9-alpha) for the board and the Venue mirror</td><td><code>server/proxy.ts</code></td><td><span class="pill done">done</span></td></tr>
+        <tr><td>Outputs — canvases → displays, kiosk windows, Identify</td><td><code>/api/outputs</code>, <code>electron/main.cjs</code>, <code>src/output.tsx</code></td><td><span class="pill part">done · proxies interim</span></td></tr>
+        <tr><td>HAP demux + frame decode to DXT (GPU-native)</td><td><code>player/mov.ts</code>, <code>player/hap.ts</code></td><td><span class="pill done">done · tested vs ffmpeg</span></td></tr>
+      </tbody>
+    </table></div>
+    <p>Today an output window renders the same proxies the venue view uses. That is enough to line up processors, check Identify and rehearse; it is not show quality (proxies are ≤960 px, H.264). The renderer below replaces the <code>&lt;video&gt;</code> elements without changing anything around them.</p>
+
+    <h2 id="outputs">Outputs = PixelGrid canvases</h2>
+    <p>An <code>OutputCanvas</code> is a processor input: <code>w×h</code> pixels, screens at canvas positions, optionally rotated. PixelGrid's canvases map onto it directly; without a PixelGrid project every screen becomes its own canvas. Each canvas is assigned to a display and a fit rule:</p>
+    <dl class="fits">
+      <dt>1:1</dt><dd>Canvas pixels are display pixels, top-left. The LED case. Surface warns when the display's mode differs from the canvas.</dd>
+      <dt>scale · letterbox</dt><dd>Uniform scale to fit (top-left / centred), for a monitor that is not the canvas size.</dd>
+      <dt>stretch</dt><dd>Fill the display, for a screen that wants a standard 1920×1080 whatever its pixel count.</dd>
+    </dl>
+    <p>Electron opens one frameless kiosk window per canvas on the chosen display with <code>force-device-scale-factor=1</code>, background throttling off, no menu, no cursor. The window loads <code>output.html?id=&lt;canvas&gt;</code> and subscribes to the runner over Socket.IO, so it renders exactly the layer state the console shows. Closing the console closes every output.</p>
+    <p><b>Identify</b> paints every screen's id, size and canvas offset onto the outputs — the first thing to do after patching a processor. The <b>Test patterns</b> cue puts each screen's own PixelGrid pattern on its BASE layer, on every engine.</p>
+
+    <h2 id="renderer">The renderer (Play)</h2>
+    <div class="rule">Never decode pixels on the CPU at show time. That one rule is what makes this run on a laptop.</div>
+    <ol class="steps">
+      <li><b>HAP native</b><p><code>Movie</code> reads only the index and fetches samples by byte range; <code>decodeHapFrame</code> turns a sample into DXT block buffers (Snappy-decompressed, chunks concatenated). The output page uploads them with <code>compressedTexImage2D</code> (S3TC / RGTC). Hap Q's YCoCg is undone in the fragment shader; Hap Q Alpha binds two textures. A 3840×1080 Hap Q frame is about 4 MB of texture upload — trivial.</p></li>
+      <li><b>Demux off the main thread</b><p>A worker owns the file handles, decodes HAP sections (Snappy is the only CPU work) and posts transferable buffers a couple of frames ahead. The render thread only uploads and draws.</p></li>
+      <li><b>Other codecs become HAP at intake</b><p>DXV and NotchLC decode through ffmpeg but not in a browser, so in Play the converter targets HAP (Hap Q for quality, Hap Alpha for overlays). ProRes and H.264 deliveries convert the same way; PNG stills upload once. One code path, one codec on disk.</p></li>
+      <li><b>Compositing</b><p>Per screen: BASE, OVERLAY, FULL quads drawn in order into the canvas framebuffer at the screen's canvas position, with per-layer opacity and the runner's fades. A rotated screen is a rotated quad.</p></li>
+      <li><b>Clock</b><p>One master clock per process, published to outputs over the socket with an offset. Each window renders in its own frame loop but picks the frame index from the master clock, so IMAG L and R on two displays never drift by more than a frame. Genlock is out of scope — LED processors frame-sync themselves.</p></li>
+      <li><b>Runner integration</b><p><code>PlayerAdapter implements EngineAdapter</code>: fireCue sets slots on the output windows, reverts and panic clear layers, <code>media/ended</code> comes back from the clip itself (walkout finished → follow-on). The runner does not know whether it is talking to Resolume or to itself.</p></li>
+    </ol>
+    <p class="targets">targets · 4 canvases · 12 screens · ~30 Mpx total @ 60 fps on a mid-range GPU · RAM bounded by the frames-ahead buffer, not clip size</p>
+
+    <h2 id="audio">Audio</h2>
+    <p>Level matching is settled: measure each clip's integrated loudness once at conversion, apply a single gain to hit the show standard (−18 LUFS, true-peak ceiling −1 dBTP), bake it into the converted file. No compression, no limiting — a loud clip is turned down, a quiet one up, dynamics untouched. The board shows the gain in the cell note.</p>
+    <p>At playback the chain per output is:</p>
+    <div class="chain">clip source → <span>clip trim</span> (operator, default 0 dB) → <span>master</span> (doc.audio.masterDb) → <span>meter</span> (true-peak, in the run bar) → <span>device</span> (setSinkId: Dante Virtual Soundcard, USB interface)</div>
+    <p>Walkouts and VTs carry audio; everything else is stripped at intake. In Feed, Resolume exposes clip volume over REST — unverified on a live box; the level match already lands the files at the right level, so that is a trim, not a necessity.</p>
+
+    <h2 id="decks">Stream Decks without Companion</h2>
+    <p><code>@elgato-stream-deck/node</code> talks HID directly. Surface lays the card out across any number of decks: one page per bout (walk red / walk blue / tale / rounds), holds and panic pinned on every page, live feedback from the runner — current cue lit, next cue pulsing. Companion export stays for venues that already run it.</p>
+
+    <h2 id="console">A console</h2>
+    <p>The lighting-desk intuition: physical things for what you touch every minute, a screen for the rest.</p>
+    <div class="console">
+      <div><b>GO section</b>GO / back / panic on big keys, and a shuttle wheel for scrubbing a held VT.</div>
+      <div><b>Surface faders</b>One motorized fader per LED surface for output level, a key above it to black that surface; audio master and walkout trim as two more.</div>
+      <div><b>Cue rail</b>8–16 keys with small displays that follow the board: bout pages, round numbers, holds.</div>
+      <div><b>Touch screen</b>The board itself. The console is USB HID + MIDI, so version one is a Stream Deck plus a MIDI fader bank (X-Touch Mini, Faderport) over Web MIDI; the housing comes later.</div>
+    </div>
+
+    <h2 id="order">Order of work</h2>
+    <ol class="steps">
+      <li><b>WebGL HAP renderer in the output page</b><p>DXT upload, YCoCg shader, alpha; fed from a worker. Proxies stay as the fallback.</p></li>
+      <li><b>PlayerAdapter and the master clock</b><p>Outputs take cue state from the runner, not by polling.</p></li>
+      <li><b>Play-mode conversion target</b><p>HAP at intake, and a Play / Feed switch per surface in Engines.</p></li>
+      <li><b>Web Audio chain</b><p>Meters and device pick; walkout trim on the board.</p></li>
+      <li><b>Stream Deck direct</b><p>Card laid out across any number of decks.</p></li>
+      <li><b>MIDI fader bank, then the console</b><p>Per-surface levels on real faders; the housing after the mapping is proven.</p></li>
+    </ol>
+  </main>
+</div>
