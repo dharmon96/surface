@@ -62,6 +62,12 @@ npm run cli -- intake show.json examples/Fight\ Night --direction opener-first -
 - Adapters (`core/engine/adapters.ts`): `MockAdapter` (records), `ResolumeAdapter` (REST: composition column connect for ALL, per-layergroup connect for scoped cues, layer clear for reverts), `DisguiseAdapter` (REST `gototag` per in-scope transport; OSC `/d3/showcontrol/cue` fallback), `CompanionAdapter` (pushes variables as custom variables). Surface order = Resolume group order; 3 layers per group.
 - `server/index.ts`: Express + Socket.IO. Bridge API the generated Companion pages call: `POST /api/cue/:n/go`, `/api/next`, `/api/prev`, `/api/panic`, `/api/text/:key`, `/api/media/ended`; `GET /api/state|cues|variables|health`. Config `surface.config.json` picks adapters (mock by default) — see `surface.config.example.json`. `npm run server -- show.json`.
 
+## Transcode execution, bridges, desktop shell
+
+- `core/intake/execute.ts`: runs the plan with ffmpeg, checks encoders once (no `dxv` → HAP Q; no `hap` → H.264, recorded as `fallback`), writes to `.part` then verifies (decodes, duration within 70 ms) before renaming; `_manifest.json` keyed by source size+mtime makes re-runs skip; originals deleted only with `deleteOriginals` and only after verify. Tiles and pads to 4-px alignment for GPU codecs. Server: `POST /api/transcode` (progress via Socket.IO `transcode`), `GET /api/transcode`.
+- `core/integrations/showcall.ts`: `toShowCall` (section header per bout, Video-department instruction per cue, cue_number == Surface number) and `fromShowCall` (non-Surface cues → custom candidates). `core/integrations/pixelmapper.ts`: `fromPixelMapper` (PixelGrid Screen/ScreenGroup → Screen/Surface + seeded screen words; host/booth/table/scale names → independent) and `contentGuideRows`. Endpoints: `/api/export/showcall`, `/api/import/showcall`, `/api/import/pixelmapper`, `/api/content-guide`, `/api/bundle`.
+- `electron/main.cjs`: starts the server in-process (`ELECTRON_RUN_AS_NODE`), serves `dist/` via `SURFACE_STATIC`, show/config live in the user-data dir, menu to open a show.json; `preload.cjs` exposes `window.surface.pickFolder`. `npm run app` (built UI) / `npm run app:dev` (Vite). Packaging (electron-builder) not set up yet.
+
 ## Conventions
 
 - Never make a generator read a source document; parsers write `ShowDoc`, humans approve (`review.status`), generators read.

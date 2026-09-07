@@ -36,8 +36,13 @@ export function planTranscodes(assignments: Assignment[], probes: Probe[], manif
     const keepAudio = !!p.audio && keepAudioFor.includes(graphic); if (p.audio && !keepAudio) notes.push(`audio track (${p.audio}) stripped`);
     const fit: TranscodeJob["fit"] = p.w === m.w && p.h === m.h ? "exact" : gcdAspectClose(p.w / p.h, m.w / m.h) ? "scale" : "letterbox";
     if (fit !== "exact") notes.push(`${p.w}x${p.h} → ${m.w}x${m.h} (${fit})`);
-    const tiles = m.w > MAX_TEX ? Math.ceil(m.w / MAX_TEX) : 1; if (tiles > 1) notes.push(`${m.w}px wide exceeds ${MAX_TEX} — ${tiles} tiles of ${m.w / tiles}px`);
+    const tiles = m.w > MAX_TEX ? Math.ceil(m.w / MAX_TEX) : 1;
+    // GPU codecs (HAP/DXV) need dimensions in multiples of 4: tiles are cut at a 4-aligned width and the raster is padded (right edge, off-screen) to fit
+    const tileW = tiles > 1 ? Math.ceil(m.w / tiles / 4) * 4 : m.w; const padW = tileW * tiles; const padH = Math.ceil(m.h / 4) * 4;
+    if (tiles > 1) notes.push(`${m.w}px wide exceeds ${MAX_TEX} — ${tiles} tiles of ${tileW}px${padW !== m.w ? ` (raster padded to ${padW}px)` : ""}`);
+    if (padH !== m.h || (tiles === 1 && padW !== m.w)) notes.push(`padded to ${padW}x${padH} for 4-pixel codec alignment`);
     const vf = fit === "exact" ? [] : fit === "scale" ? [`scale=${m.w}:${m.h}:flags=lanczos`] : [`scale=${m.w}:${m.h}:force_original_aspect_ratio=decrease:flags=lanczos`, `pad=${m.w}:${m.h}:(ow-iw)/2:(oh-ih)/2:black`];
+    if (!p.still && (padW !== m.w || padH !== m.h)) vf.push(`pad=${padW}:${padH}:0:0:black`);
     const alpha = /a$|rgba|argb|bgra|yuva|gbrap/.test(p.pix ?? "") && !p.still;
     let codec: TranscodeJob["codec"]; let action: TranscodeJob["action"];
     if (p.still) { codec = "png"; action = fit === "exact" && tiles === 1 ? "copy" : tiles > 1 ? "resize+tile" : "resize"; }
@@ -46,7 +51,7 @@ export function planTranscodes(assignments: Assignment[], probes: Probe[], manif
     for (let t = 0; t < tiles; t++) {
       const out = `${opts.outDir}/${a.slot}${tiles > 1 ? `_T${t + 1}of${tiles}` : ""}.${codec === "png" ? "png" : "mov"}`; outs.push(out);
       if (action === "copy") { args.push(["-y", "-i", a.file, "-c", "copy", ...(keepAudio ? [] : ["-an"]), out]); continue; }
-      const crop = tiles > 1 ? [`crop=${m.w / tiles}:${m.h}:${(m.w / tiles) * t}:0`] : [];
+      const crop = tiles > 1 ? [`crop=${tileW}:${padH}:${tileW * t}:0`] : [];
       const filters = [...vf, ...crop]; const v = filters.length ? ["-vf", filters.join(",")] : [];
       const enc = codec === "png" ? ["-frames:v", "1"] : codec === "dxv" ? ["-c:v", "dxv"] : codec === "hap" ? ["-c:v", "hap", "-format", "hap_q"] : codec === "hap_alpha" ? ["-c:v", "hap", "-format", "hap_alpha"] : ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16"];
       args.push(["-y", "-i", a.file, ...v, ...enc, ...(keepAudio ? ["-c:a", "aac", "-b:a", "192k"] : ["-an"]), "-movflags", "+faststart", out]);

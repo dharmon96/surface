@@ -25,6 +25,10 @@ import { join, relative } from "node:path";
 import { probe } from "../core/intake/intake.js";
 import { intake } from "../core/intake/match.js";
 import { planTranscodes } from "../core/intake/transcode.js";
+import { executeTranscodes, type ExecEvent } from "../core/intake/execute.js";
+import { toShowCall, fromShowCall } from "../core/integrations/showcall.js";
+import { fromPixelMapper, contentGuideRows } from "../core/integrations/pixelmapper.js";
+import { buildBundle } from "../core/index.js";
 import type { ScreenSynonyms } from "../core/intake/tokens.js";
 import { Runner } from "../core/engine/runner.js";
 import { MockAdapter, ResolumeAdapter, DisguiseAdapter, CompanionAdapter } from "../core/engine/adapters.js";
@@ -50,7 +54,8 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   runner = new Runner(doc, cues, adapters);
   for (const a of adapters) await a.init(doc, cues);
 
-  const app = express(); app.use(cors()); app.use(express.json()); app.use(express.text());
+  const app = express(); app.use(cors()); app.use(express.json({ limit: "20mb" })); app.use(express.text());
+  if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) { app.use(express.static(process.env.SURFACE_STATIC)); }
   const http = createServer(app); const io = new Server(http, { cors: { origin: "*" } });
   runner.on((e) => io.emit(e.type, e));
 
@@ -73,6 +78,22 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     res.json(lastIntake);
   });
   app.get("/api/intake", (_q, res) => res.json(lastIntake));
+  // ── transcode execution: runs the last plan; progress over Socket.IO ("transcode" events); originals deleted only if asked and only after verify
+  let transcodeRun: { running: boolean; started?: string; events: ExecEvent[]; result?: any } = { running: false, events: [] };
+  app.post("/api/transcode", async (q, res) => {
+    if (!lastIntake) return res.status(400).json({ error: "run intake first" }); if (transcodeRun.running) return res.status(409).json({ error: "already running" });
+    transcodeRun = { running: true, started: new Date().toISOString(), events: [] }; res.json({ ok: true, jobs: lastIntake.jobs.length });
+    const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); }
+    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); }
+  });
+  app.get("/api/transcode", (_q, res) => res.json({ running: transcodeRun.running, started: transcodeRun.started, recent: transcodeRun.events.slice(-50), result: transcodeRun.result }));
+  // ── ShowCall / PixelMapper bridges and the author-only bundle
+  app.get("/api/export/showcall", (_q, res) => res.json(toShowCall(doc, cues)));
+  app.post("/api/import/showcall", (q, res) => { const extra = fromShowCall(cues, q.body?.cues ?? q.body ?? []); doc.customCues = [...(doc.customCues ?? []).filter((c) => !String(c.id).startsWith("SC.")), ...extra]; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, imported: extra.length, cues: cues.length }); });
+  app.post("/api/import/pixelmapper", (q, res) => { const r = fromPixelMapper(q.body); doc.screens = r.screens; doc.surfaces = r.surfaces; (doc as any).screenWords = r.screenWords; doc.review.flags = [...doc.review.flags.filter((f) => !/placeholder/i.test(f)), ...r.flags]; cues = deriveCues(doc, (doc as any).pack); runner = new Runner(doc, cues, adapters); runner.on((e) => io.emit(e.type, e)); writeFileSync(showFile, JSON.stringify(doc, null, 1)); res.json({ ok: true, screens: r.screens.length, surfaces: r.surfaces.length, flags: r.flags, cues: cues.length }); });
+  app.get("/api/content-guide", (_q, res) => res.json(contentGuideRows(doc.screens, doc.surfaces)));
+  app.post("/api/bundle", async (q, res) => { const outDir = q.body?.outDir ?? join(process.cwd(), "out", doc.event.id); const files = await buildBundle(doc, cues, { outDir, companion: { mode: q.body?.mode ?? "bridge", surfaceHost: q.body?.host ?? `127.0.0.1:${cfg.port ?? 8090}` } }); res.json({ ok: true, outDir, files }); });
   app.get("/api/show", (_q, res) => res.json({ event: doc.event, surfaces: doc.surfaces, screens: doc.screens, review: doc.review, cueCount: cues.length }));
   app.get("/api/cues", (_q, res) => res.json(cues));
   app.get("/api/state", (_q, res) => res.json(runner.getState()));
@@ -87,6 +108,7 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/media/ended", async (q, res) => { await runner.mediaEnded(q.body?.slot ?? ""); res.json({ ok: true }); });
   io.on("connection", (s) => { s.emit("state", { type: "state", state: runner.getState() }); s.on("go", (n: number) => void runner.go(n)); s.on("next", () => void runner.next()); s.on("panic", () => void runner.panic()); });
 
+  if (process.env.SURFACE_STATIC && existsSync(process.env.SURFACE_STATIC)) app.get(/^(?!\/api|\/socket\.io).*/, (_q, res) => res.sendFile(join(process.env.SURFACE_STATIC!, "index.html")));
   const port = cfg.port ?? 8090;
   await new Promise<void>((r) => http.listen(port, r));
   console.log(`Surface ${doc.event.name} — ${cues.length} cues · ${doc.surfaces.length} surfaces · adapters: ${adapters.map((a) => `${a.id}${a.status().connected ? "" : " (offline)"}`).join(", ")} · http://127.0.0.1:${port}`);

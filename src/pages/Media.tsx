@@ -3,7 +3,7 @@ import { useStore } from "../store";
 
 /** Drop → probe → match → plan. Nothing is converted or deleted from this screen yet; it shows what would happen. */
 export function Media() {
-  const { intake, runIntake, doc } = useStore();
+  const { intake, runIntake, doc, transcode, startTranscode } = useStore(); const [del, setDel] = useState(false);
   const [dir, setDir] = useState(intake?.dir ?? ""); const [direction, setDirection] = useState(""); const [aIs, setAIs] = useState(""); const [engine, setEngine] = useState("resolume"); const [busy, setBusy] = useState(false); const [filter, setFilter] = useState<"all" | "low" | "issues">("all");
   const run = async () => { setBusy(true); try { await runIntake(dir, { direction: direction || undefined, aIs: aIs || undefined }, engine); } finally { setBusy(false); } };
   const rows = (intake?.assignments ?? []).filter((a) => filter === "all" || (filter === "low" && a.confidence < 0.7) || (filter === "issues" && a.issues.length));
@@ -14,6 +14,7 @@ export function Media() {
         <h3>Delivery folder</h3>
         <div className="gorow" style={{ margin: 0 }}>
           <input style={{ flex: 1 }} placeholder="D:\Shows\event\delivery (as the promoter sent it)" value={dir} onChange={(e) => setDir(e.target.value)} />
+          {(window as any).surface?.pickFolder && <button onClick={async () => { const p = await (window as any).surface.pickFolder(); if (p) setDir(p); }}>Browse…</button>}
           <select value={direction} onChange={(e) => setDirection(e.target.value)}><option value="">numbering: infer</option><option value="opener-first">1 = opener</option><option value="main-first">1 = main event</option></select>
           <select value={aIs} onChange={(e) => setAIs(e.target.value)}><option value="">a/b: infer</option><option value="red">a = red</option><option value="blue">a = blue</option></select>
           <select value={engine} onChange={(e) => setEngine(e.target.value)}><option value="resolume">Resolume (DXV)</option><option value="disguise">disguise (HAP)</option><option value="generic">generic (H.264)</option></select>
@@ -38,7 +39,15 @@ export function Media() {
           <div className="panel"><h3>Transcode plan ({intake.jobs.length} files → {doc?.event.id}/media)</h3>
             <div className="mono-small dim">{Object.entries(intake.jobs.reduce((o: any, j: any) => ((o[`${j.action}·${j.codec}`] = (o[`${j.action}·${j.codec}`] ?? 0) + 1), o), {})).map(([k, v]) => <span key={k} style={{ marginRight: 12 }}>{k}: {v as number}</span>)}</div>
             <div className="scroll mono-small" style={{ maxHeight: 200, marginTop: 6 }}>{intake.jobs.filter((j: any) => j.notes.length).slice(0, 60).map((j: any) => <div key={j.slot}><span className="dim">{j.slot}</span> — {j.notes.join("; ")}</div>)}</div>
-            <div className="gorow"><button disabled title="Execution lands with the desktop shell; plan is complete">Transcode (soon)</button><span className="dim mono-small">originals are only removed after each output verifies</span></div>
+            <div className="gorow">
+              <button className="primary" disabled={transcode.running || !intake.jobs.length} onClick={() => startTranscode(del)}>{transcode.running ? "transcoding…" : `Transcode ${intake.jobs.length} files`}</button>
+              <label className="dim mono-small"><input type="checkbox" checked={del} onChange={(e) => setDel(e.target.checked)} /> delete originals after each output verifies</label>
+            </div>
+            {Object.keys(transcode.progress).length > 0 && (() => { const P = Object.values(transcode.progress); const done = P.filter((p) => p.phase === "done" || p.phase === "skipped").length, failed = P.filter((p) => p.phase === "failed").length; return (
+              <div className="mono-small" style={{ marginTop: 6 }}>
+                <div><span className="conf" style={{ width: 200 }}><i style={{ width: `${(done / Math.max(1, intake.jobs.length)) * 100}%` }} /></span> {done}/{intake.jobs.length} done{failed ? <span style={{ color: "var(--red)" }}> · {failed} failed</span> : null}</div>
+                <div className="scroll" style={{ maxHeight: 160 }}>{Object.entries(transcode.progress).filter(([, p]) => p.phase !== "done" && p.phase !== "skipped").slice(0, 12).map(([k, p]) => <div key={k}><span className={p.phase === "failed" ? "" : "dim"} style={p.phase === "failed" ? { color: "var(--red)" } : {}}>{p.phase}{p.pct != null ? ` ${p.pct}%` : ""}</span> {k} <span className="faint">{p.detail}</span></div>)}</div>
+              </div>); })()}
           </div>
         </div>
       </div>}

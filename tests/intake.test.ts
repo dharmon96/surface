@@ -66,7 +66,7 @@ describe("Matchroom delivery (names in paths, fascia rasters)", () => {
   });
   it("plans tiling for rasters wider than the GPU texture limit and strips stray audio", () => {
     const jobs = planTranscodes(r.assignments, matchroom.probes, matchroom.manifest, { engine: "resolume", outDir: "M" });
-    const fascia = jobs.find((j) => /FASCIA_LO/.test(j.slot))!; expect(fascia.out.length).toBe(Math.ceil(28576 / MAX_TEX)); expect(fascia.action).toBe("encode+tile"); expect(fascia.args[1].join(" ")).toMatch(/crop=14288:64:14288:0/);
+    const fascia = jobs.find((j) => /FASCIA_LO/.test(j.slot))!; expect(fascia.out.length).toBe(Math.ceil(28576 / MAX_TEX)); expect(fascia.action).toBe("encode+tile"); expect(fascia.args[1].join(" ")).toMatch(/crop=14288:64:14288:0/); // 28576/2 = 14288, already 4-aligned
     const winner = jobs.find((j) => /B08_WINNER_RED_HUNG/.test(j.slot))!; expect(winner.keepAudio).toBe(false); expect(winner.args[0]).toContain("-an"); expect(winner.codec).toBe("dxv");
     expect(jobs.every((j) => j.deleteOriginal === false)).toBe(true);
   });
