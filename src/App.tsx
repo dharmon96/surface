@@ -1,45 +1,52 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store";
+import { Board } from "./pages/Board";
 import { Review } from "./pages/Review";
 import { Cues } from "./pages/Cues";
 import { Media } from "./pages/Media";
-import { Run } from "./pages/Run";
 import { Health } from "./pages/Health";
 import { Hub } from "./pages/Hub";
 
-const TABS = ["Hub", "Review", "Cues", "Media", "Run", "Health"] as const;
-type Tab = (typeof TABS)[number];
+/** The board is the app. Everything else opens as a drawer over it. */
+const DRAWERS = ["Projects", "Card", "Cues", "Media (advanced)", "Engines"] as const;
+type Drawer = (typeof DRAWERS)[number];
 
 export default function App() {
-  const { doc, cues, state, health, error, load, connect, loadHub, hub, projects } = useStore();
-  const [tab, setTab] = useState<Tab>(() => (localStorage.getItem("surface.tab") as Tab) || "Hub");
+  const { doc, cues, state, health, error, load, connect, loadHub, hub, projects, mode, setMode } = useStore();
+  const [drawer, setDrawer] = useState<Drawer | null>(null);
   useEffect(() => { load(); connect(); loadHub(true); const t = setInterval(() => useStore.getState().refreshHealth().catch(() => {}), 5000); return () => clearInterval(t); }, []);
-  useEffect(() => { localStorage.setItem("surface.tab", tab); }, [tab]);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if ((e.target as HTMLElement)?.tagName === "INPUT") return; if (tab !== "Run") return; if (e.code === "Space" || e.key === "Enter") { e.preventDefault(); useStore.getState().next(); } if (e.key === "Backspace") { e.preventDefault(); useStore.getState().prev(); } if (e.key === "Escape") useStore.getState().panic(); };
+    const k = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName; if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "Escape" && drawer) return setDrawer(null);
+      if (mode !== "run" || drawer) return;
+      if (e.code === "Space" || e.key === "Enter") { e.preventDefault(); useStore.getState().next(); } if (e.key === "Backspace") { e.preventDefault(); useStore.getState().prev(); } if (e.key === "Escape") useStore.getState().panic();
+    };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
-  }, [tab]);
+  }, [mode, drawer]);
   const online = health?.adapters.filter((a) => a.connected).length ?? 0;
+  const noBouts = doc && !(doc.data.bouts?.length);
   return (
     <div className="app">
       <header className="top">
         <div className="brand">SUR<span>FACE</span></div>
-        <div className="dim">{doc ? `${doc.event.name} · ${doc.event.date ?? ""} · ${doc.surfaces.length} surfaces · ${cues.length} cues` : "no show loaded"}</div>
-        <nav className="tabs">{TABS.map((t) => <button key={t} className={t === tab ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</nav>
-        <div style={{ marginLeft: "auto" }}>{projects?.enabled && <span className={`tag ${hub?.signedIn ? "ok" : ""}`} title={hub?.user?.email ?? "not signed in"} onClick={() => setTab("Hub")} style={{ cursor: "pointer" }}>{hub?.signedIn ? hub.user?.name ?? hub.user?.email : "offline"}</span>} {doc && <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span>} <span className={`tag ${online ? "ok" : "bad"}`}>{online}/{health?.adapters.length ?? 0} engines</span></div>
+        {doc && <div className="show" onClick={() => setDrawer("Projects")} title="Projects" style={{ cursor: "pointer" }}>{doc.event.name}<small>{[doc.event.date, doc.event.venue, doc.event.broadcast?.network].filter(Boolean).join(" · ")}{cues.length ? ` · ${cues.length} cues` : ""}</small></div>}
+        <div className="mode" role="tablist"><button className={mode === "prepare" ? "on" : ""} onClick={() => setMode("prepare")}>Prepare</button><button className={mode === "run" ? "on" : ""} onClick={() => setMode("run")}>Run</button></div>
+        <nav className="more">{DRAWERS.map((d) => <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)}>{d}</button>)}</nav>
+        <div className="tags">{projects?.enabled && <span className={`tag ${hub?.signedIn ? "ok" : ""}`} title={hub?.user?.email ?? "not signed in"}>{hub?.signedIn ? hub.user?.name ?? hub.user?.email : "offline"}</span>} {doc && <span className={`tag ${doc.review.status === "approved" ? "ok" : "warn"}`}>{doc.review.status}</span>} <span className={`tag ${online ? "ok" : "bad"}`}>{online}/{health?.adapters.length ?? 0} engines</span></div>
       </header>
       <main className="main">
-        {error && <div className="panel" style={{ borderColor: "var(--red)" }}>{error} <button style={{ marginLeft: 8 }} onClick={() => useStore.setState({ error: null })}>dismiss</button></div>}
-        {tab === "Hub" && <Hub />}
-        {doc && tab === "Review" && <Review />}
-        {doc && tab === "Cues" && <Cues />}
-        {doc && tab === "Media" && <Media />}
-        {doc && tab === "Run" && <Run />}
-        {tab === "Health" && <Health />}
+        {error && <div className="panel" style={{ borderColor: "var(--red)", margin: 12 }}>{error} <button style={{ marginLeft: 8 }} onClick={() => useStore.setState({ error: null })}>dismiss</button></div>}
+        {noBouts && !drawer && <div className="empty"><h2>Start with the promoter's sheet</h2><p>Drop the bout sheet or timing sheet anywhere on this window — the card fills in, then drop the graphics folder on it.</p><p className="dim">Or open a project from the name at the top.</p></div>}
+        {doc && <Board />}
+        {drawer && <div className="drawer"><div className="drawer-head"><b>{drawer}</b><button onClick={() => setDrawer(null)}>close · Esc</button></div><div className="drawer-body">
+          {drawer === "Projects" && <Hub />}{drawer === "Card" && doc && <Review />}{drawer === "Cues" && doc && <Cues />}{drawer === "Media (advanced)" && doc && <Media />}{drawer === "Engines" && <Health />}
+        </div></div>}
       </main>
       <footer className="status">
-        <span>cue {state?.current ?? "—"} → next {state?.next ?? "—"}</span><span>bout {state?.bout ?? "—"} · round {state?.round ?? "—"}</span><span>timers {state?.timers ?? 0}</span>
-        <span style={{ marginLeft: "auto" }}>Run: <kbd>Space</kbd> GO · <kbd>Backspace</kbd> back · <kbd>Esc</kbd> panic</span>
+        <span>cue {state?.current ?? "—"} → next {state?.next ?? "—"}</span><span>bout {state?.bout ?? "—"} · round {state?.round ?? "—"}</span>
+        {health?.adapters.map((a) => <span key={a.id}><span className={`dot ${a.connected ? "" : "off"}`} />{a.id}{a.detail && a.connected ? ` · ${a.detail.replace(/^https?:\/\//, "").replace(/\/api.*$/, "")}` : ""}</span>)}
+        <span style={{ marginLeft: "auto" }}>{mode === "run" ? <>Run: <kbd>Space</kbd> GO · <kbd>Backspace</kbd> back · <kbd>Esc</kbd> panic</> : "Prepare: drop a folder or a sheet anywhere"}</span>
       </footer>
     </div>
   );

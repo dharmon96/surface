@@ -10,12 +10,19 @@ export interface HubStatus { hubUrl: string; signedIn: boolean; user: { id: stri
 export interface ProjectMeta { id: string; name: string; eventDate?: string; venue?: string; pack: string; createdAt: string; updatedAt: string; cloudUpdatedAt?: string | null; sync: "local" | "synced" | "ahead" | "behind" | "conflict" | "error"; error?: string; visibility?: string }
 export interface ProjectsView { enabled: boolean; active: string | null; projects: ProjectMeta[] }
 export interface SyncResult { pushed: number; pulled: number; conflicts: string[]; errors: string[]; at: string }
+export type SlotStatus = "ready" | "convert" | "missing";
+export interface BoardSlot { slot: string; screen: string; w: number; h: number; status: SlotStatus; file?: string; out?: string; thumb?: string; note?: string; confidence?: number }
+export interface BoardCell { key: string; label: string; cues: { n: number; id: string; name: string }[]; slots: BoardSlot[]; status: SlotStatus | "none"; thumb?: string; behaviour?: string }
+export interface BoardRow { id: string; kind: "event" | "bout"; order: number; title: string; red?: { id: string; name: string; country?: string }; blue?: { id: string; name: string; country?: string }; meta: { rounds?: number; weightClass?: string; title?: string; isMain?: boolean; isCoMain?: boolean }; flags: string[]; cells: Record<string, BoardCell>; rounds?: { n: number; cue: number; status: SlotStatus | "none"; slots: BoardSlot[] }[] }
+export interface Board { columns: { key: string; label: string; sub?: string }[]; rows: BoardRow[]; screens: { id: string; name: string; w: number; h: number; ready: number; total: number }[]; missing: { row: string; label: string; screens: string[]; kind: SlotStatus }[]; totals: { slots: number; ready: number; convert: number; missing: number; files: number; unmatched: number }; delivery?: { dir: string; files: number; scheme: any; ocrRan?: number } }
 export interface IntakeView { dir: string; probes: number; ocrRan?: number; scheme: any; assignments: any[]; unmatched: any[]; ignored: any[]; unfilled: string[]; issues: string[]; jobs: any[] }
 
 interface S {
   doc: ShowDoc | null; cues: Cue[]; state: RunnerState | null; health: Health | null; intake: IntakeView | null; log: string[]; socket: Socket | null; error: string | null;
   transcode: { running: boolean; progress: Record<string, { phase: string; pct?: number; detail?: string }>; result?: any };
   hub: HubStatus | null; projects: ProjectsView | null; lastSync: SyncResult | null; hubBusy: string | null;
+  board: Board | null; mode: "prepare" | "run"; prepare: { phase: string; detail?: string; dir?: string } | null; versions: { file: string; at: string; diff: string[] }[]; build: { engine: string; done: number; total: number } | null;
+  loadBoard(): Promise<void>; setMode(m: "prepare" | "run"): void; runPrepare(dir: string, deleteOriginals: boolean): Promise<void>; dropSheet(text: string, file: string): Promise<string[]>; buildResolume(): Promise<string>; requestText(): Promise<string>;
   loadHub(refresh?: boolean): Promise<void>; signIn(): Promise<void>; signOut(): Promise<void>; syncProjects(): Promise<void>;
   createProject(p: { name: string; date?: string; venue?: string; pack?: string }): Promise<void>; importSheet(text: string, file: string): Promise<string[]>; openProject(id: string): Promise<void>; deleteProject(id: string, cloud: boolean): Promise<void>;
   load(): Promise<void>; connect(): void; go(n: number): Promise<void>; next(): Promise<void>; prev(): Promise<void>; panic(): Promise<void>;
@@ -26,6 +33,13 @@ interface S {
 export const useStore = create<S>((set, get) => ({
   doc: null, cues: [], state: null, health: null, intake: null, log: [], socket: null, error: null, transcode: { running: false, progress: {} },
   hub: null, projects: null, lastSync: null, hubBusy: null,
+  board: null, mode: (localStorage.getItem("surface.mode") as any) || "prepare", prepare: null, versions: [], build: null,
+  async loadBoard() { try { const [board, versions] = await Promise.all([j<Board>("/api/board"), j<any[]>("/api/versions")]); set({ board, versions }); } catch {} },
+  setMode(m) { localStorage.setItem("surface.mode", m); set({ mode: m }); },
+  async runPrepare(dir, deleteOriginals) { set({ prepare: { phase: "probing", dir }, transcode: { running: true, progress: {} } }); try { await j("/api/prepare", { method: "POST", body: JSON.stringify({ dir, deleteOriginals }) }); } catch (e: any) { set({ prepare: { phase: "failed", detail: e.message }, transcode: { running: false, progress: {} } }); } },
+  async dropSheet(text, file) { const r = await j<{ diff: string[]; flags: string[] }>("/api/sheet", { method: "POST", body: JSON.stringify({ text, file }) }); await get().load(); await get().loadBoard(); return r.diff; },
+  async buildResolume() { set({ build: { engine: "resolume", done: 0, total: 1 } }); try { const r = await j<{ ops: number }>("/api/build/resolume", { method: "POST", body: "{}" }); return `Resolume built — ${r.ops} operations`; } catch (e: any) { return `Resolume build failed: ${e.message}`; } finally { set({ build: null }); } },
+  async requestText() { const r = await fetch("/api/board/request"); return r.text(); },
   async loadHub(refresh = false) { try { const [hub, projects] = await Promise.all([j<HubStatus>(`/api/hub/status${refresh ? "?refresh=1" : ""}`), j<ProjectsView>("/api/projects")]); set({ hub, projects }); } catch {} },
   async signIn() {
     const d = (window as any).surface; set({ hubBusy: "signing in…" });
@@ -42,17 +56,20 @@ export const useStore = create<S>((set, get) => ({
   async openProject(id) { const r = await j<ProjectsView>(`/api/projects/${id}/open`, { method: "POST" }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects }, intake: null }); await get().load(); },
   async deleteProject(id, cloud) { const r = await j<ProjectsView & { warning?: string }>(`/api/projects/${id}${cloud ? "?cloud=1" : ""}`, { method: "DELETE" }); set({ projects: { enabled: r.enabled, active: r.active, projects: r.projects }, error: r.warning ?? null }); },
   async load() {
-    try { const [doc, cues, state, health, intake] = await Promise.all([j<ShowDoc>("/api/doc"), j<Cue[]>("/api/cues"), j<RunnerState>("/api/state"), j<Health>("/api/health"), j<IntakeView | null>("/api/intake")]); set({ doc, cues, state, health, intake, error: null }); }
+    try { const [doc, cues, state, health, intake] = await Promise.all([j<ShowDoc>("/api/doc"), j<Cue[]>("/api/cues"), j<RunnerState>("/api/state"), j<Health>("/api/health"), j<IntakeView | null>("/api/intake")]); set({ doc, cues, state, health, intake, error: null }); get().loadBoard(); }
     catch (e: any) { set({ error: `Server not reachable (${e.message}). Start it with: npm run server -- show.json` }); }
   },
   connect() {
     if (get().socket) return;
     const s = io("/", { path: "/socket.io" });
     s.on("state", (e: any) => set({ state: e.state }));
-    s.on("show", () => { get().load(); get().loadHub(); });
+    s.on("show", () => { get().load(); get().loadHub(); get().loadBoard(); });
+    s.on("board", () => { get().loadBoard(); });
+    s.on("prepare", (e: any) => set({ prepare: e }));
+    s.on("build", (e: any) => set({ build: e }));
     s.on("fired", (e: any) => set((st) => ({ log: [`${new Date().toLocaleTimeString()}  GO ${String(e.cue.n).padStart(3, "0")} ${e.cue.id}  ${e.cue.name}`, ...st.log].slice(0, 200) })));
     s.on("revert", (e: any) => set((st) => ({ log: [`${new Date().toLocaleTimeString()}  ↩ ${e.surface}/${e.layer} back to base`, ...st.log].slice(0, 200) })));
-    s.on("transcode", (e: any) => set((st) => { if (e.job === "*") return { transcode: { ...st.transcode, running: false } }; return { transcode: { ...st.transcode, running: true, progress: { ...st.transcode.progress, [e.job]: { phase: e.phase, pct: e.pct, detail: e.detail } } } }; }));
+    s.on("transcode", (e: any) => set((st) => { if (e.job === "*") { get().loadBoard(); return { transcode: { ...st.transcode, running: false } }; } return { transcode: { ...st.transcode, running: true, progress: { ...st.transcode.progress, [e.job]: { phase: e.phase, pct: e.pct, detail: e.detail } } } }; }));
     s.on("error", (e: any) => set((st) => ({ log: [`${new Date().toLocaleTimeString()}  ✗ ${e.adapter}: ${e.error}`, ...st.log].slice(0, 200) })));
     set({ socket: s });
   },

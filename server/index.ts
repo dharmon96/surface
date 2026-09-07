@@ -24,7 +24,7 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { readFileSync, existsSync } from "node:fs";
 import { deriveCues, loadShowDoc, mediaManifest } from "../core/index.js";
-import { writeFileSync, readdirSync, statSync, renameSync } from "node:fs";
+import { writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { probe } from "../core/intake/intake.js";
 import { intake } from "../core/intake/match.js";
@@ -42,6 +42,13 @@ import type { ShowDoc } from "../core/types.js";
 import { parseSheet } from "../core/parse/index.js";
 import { HubClient, HUB_URL } from "../core/hub/client.js";
 import { ProjectStore, blankShowDoc, type HubState } from "./projects.js";
+import { buildBoard, promoterRequest } from "./board.js";
+import { mergeSheets } from "../core/parse/index.js";
+import { resolumePlan } from "../core/gen/engines.js";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, statSync as statSyncFs } from "node:fs";
+import { tmpdir } from "node:os";
 
 export interface SurfaceConfig {
   port?: number;
@@ -70,7 +77,13 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   if (store) {
     const ix = store.list(); const wanted = existsSync(join(cfg.dataDir!, "active.json")) ? JSON.parse(readFileSync(join(cfg.dataDir!, "active.json"), "utf8")).id : null;
     if (wanted && store.get(wanted)) { activeId = wanted; showFile = store.path(wanted); }
-    else if (existsSync(showFile) && !showFile.startsWith(join(cfg.dataDir!, "projects"))) { const m = store.create(loadShowDoc(JSON.parse(readFileSync(showFile, "utf8")))); renameSync(showFile, `${showFile}.imported`); activeId = m.id; showFile = store.path(m.id); } // a loose show.json becomes a project once
+    else if (existsSync(showFile) && !showFile.startsWith(join(cfg.dataDir!, "projects"))) {
+      // a loose show.json becomes a project once; remembered in imported.json (never touch the file itself)
+      const impFile = join(cfg.dataDir!, "imported.json"); const imported: Record<string, string> = existsSync(impFile) ? JSON.parse(readFileSync(impFile, "utf8")) : {};
+      const known = imported[showFile] && store.get(imported[showFile]) ? imported[showFile] : null;
+      if (known) { activeId = known; showFile = store.path(known); }
+      else { const m = store.create(loadShowDoc(JSON.parse(readFileSync(showFile, "utf8")))); imported[showFile] = m.id; writeFileSync(impFile, JSON.stringify(imported, null, 1)); activeId = m.id; showFile = store.path(m.id); }
+    }
     else if (ix[0]) { activeId = ix[0].id; showFile = store.path(activeId); }
   }
   if (!existsSync(showFile)) { const d = blankShowDoc("Untitled show"); if (store) { const m = store.create(d); activeId = m.id; showFile = store.path(m.id); } else writeFileSync(showFile, JSON.stringify(d, null, 1)); }
@@ -133,26 +146,30 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
   app.post("/api/projects/sync", async (_q, res) => { if (!store) return res.status(400).json({ error: "projects need a data dir" }); if (!hub.signedIn) return res.status(401).json({ error: "sign in first" }); const r = await store.sync(hub); if (activeId && !store.get(activeId)) activeId = null; if (r.errors.some((e) => /expired/.test(e))) { hubState = { ...hubState, error: "session expired — sign in again" }; saveHub(); } res.json({ ok: true, ...r, ...projectsView() }); });
   app.get("/api/manifest", (_q, res) => res.json(mediaManifest(doc, cues)));
   let lastIntake: any = null;
-  app.post("/api/intake", async (q, res) => {
-    const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" });
+  const mediaDirFor = (dir: string, outDir?: string) => outDir ?? join(dir, "..", "media");
+  /** Probe → match → (OCR the stragglers) → plan. Shared by /api/intake (advanced) and /api/prepare (the board's one button). */
+  async function runIntake(dir: string, o: { override?: any; ocr?: boolean; engine?: "resolume" | "disguise" | "generic"; outDir?: string }) {
     const walk = (d: string): string[] => { try { return readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(mov|mp4|mxf|avi|png|jpe?g|tif|webp)$/i.test(f) ? [p] : []; }); } catch { return []; } };
     const files = walk(dir); const probes = [];
     for (const f of files) { try { const p = await probe(f); p.file = relative(dir, f).replace(/\\/g, "/"); probes.push(p); } catch {} }
     const syn: ScreenSynonyms = Object.fromEntries(doc.screens.map((s) => [s.id, { words: [s.id.toLowerCase().replace(/_/g, " "), s.name.toLowerCase(), ...(((doc as any).screenWords ?? {})[s.id] ?? [])], w: s.w, h: s.h }]));
     const man = mediaManifest(doc, cues);
-    let r = intake(doc, man, probes, syn, { override: q.body?.override });
+    let r = intake(doc, man, probes, syn, { override: o.override });
     // second pass: OCR only the files the first pass could not place confidently, then match again with the words it read
-    let ocrRan = 0; if (q.body?.ocr && (await ocrAvailable())) {
+    let ocrRan = 0; if (o.ocr && (await ocrAvailable())) {
       const weak = new Set([...r.unmatched.map((u) => u.file), ...r.assignments.filter((a) => a.confidence < 0.7).map((a) => a.file)]);
       const ocr: Record<string, OcrResult> = {}; const list = probes.filter((p) => weak.has(p.file)); let i = 0;
       await Promise.all(Array.from({ length: 3 }, async () => { for (let p = list[i++]; p; p = list[i++]) { try { ocr[p.file] = await ocrFile(join(dir, p.file), p); ocrRan++; io.emit("intake", { phase: "ocr", file: p.file, done: ocrRan, total: list.length }); } catch {} } }));
-      r = intake(doc, man, probes, syn, { override: q.body?.override, ocr });
+      r = intake(doc, man, probes, syn, { override: o.override, ocr });
     }
-    const jobs = planTranscodes(r.assignments, probes, man, { engine: q.body?.engine ?? "resolume", outDir: q.body?.outDir ?? join(dir, "..", "media"), deleteOriginals: false });
-    lastIntake = { dir, probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
-    res.json(lastIntake);
-  });
+    const jobs = planTranscodes(r.assignments, probes, man, { engine: o.engine ?? "resolume", outDir: mediaDirFor(dir, o.outDir), deleteOriginals: false });
+    lastIntake = { dir, mediaDir: mediaDirFor(dir, o.outDir), probes: probes.length, ocrRan, scheme: r.scheme, assignments: r.assignments, unmatched: r.unmatched.map((u) => ({ file: u.file, why: u.why, candidates: u.candidates, ocr: (u.evidence as any).ocr?.words?.slice(0, 6) })), ignored: r.ignored, unfilled: r.unfilled, issues: r.issues, jobs };
+    io.emit("board", { type: "board", reason: "intake" });
+    return lastIntake;
+  }
+  app.post("/api/intake", async (q, res) => { const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); res.json(await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr, engine: q.body?.engine, outDir: q.body?.outDir })); });
   app.get("/api/intake", (_q, res) => res.json(lastIntake));
+  app.get("/api/versions", (_q, res) => res.json((doc as any).versions ?? []));
   // ── transcode execution: runs the last plan; progress over Socket.IO ("transcode" events); originals deleted only if asked and only after verify
   let transcodeRun: { running: boolean; started?: string; events: ExecEvent[]; result?: any } = { running: false, events: [] };
   app.post("/api/transcode", async (q, res) => {
@@ -160,8 +177,59 @@ export async function startServer(showFile: string, cfg: SurfaceConfig) {
     transcodeRun = { running: true, started: new Date().toISOString(), events: [] }; res.json({ ok: true, jobs: lastIntake.jobs.length });
     const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
     try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); }
-    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); }
+    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("board", { type: "board", reason: "transcode" }); }
   });
+  // ── the board's one button: intake with everything inferred, then convert; originals deleted only if asked (after verify)
+  app.post("/api/prepare", async (q, res) => {
+    const dir: string = q.body?.dir; if (!dir) return res.status(400).json({ error: "dir required" }); if (transcodeRun.running) return res.status(409).json({ error: "already converting" });
+    io.emit("prepare", { phase: "probing", dir });
+    try { await runIntake(dir, { override: q.body?.override, ocr: q.body?.ocr ?? true, engine: q.body?.engine ?? "resolume" }); } catch (e: any) { io.emit("prepare", { phase: "failed", detail: e.message }); return res.status(500).json({ error: e.message }); }
+    res.json({ ok: true, files: lastIntake.probes, jobs: lastIntake.jobs.length, scheme: lastIntake.scheme });
+    if (q.body?.convert === false || !lastIntake.jobs.length) { io.emit("prepare", { phase: "done" }); return; }
+    transcodeRun = { running: true, started: new Date().toISOString(), events: [] };
+    const onProgress = (e: ExecEvent) => { transcodeRun.events.push(e); if (transcodeRun.events.length > 5000) transcodeRun.events.splice(0, 1000); io.emit("transcode", e); };
+    try { transcodeRun.result = await executeTranscodes(lastIntake.jobs, { srcRoot: lastIntake.dir, concurrency: Number(q.body?.concurrency ?? 2), deleteOriginals: !!q.body?.deleteOriginals, onProgress }); }
+    catch (e: any) { transcodeRun.result = { error: e.message }; } finally { transcodeRun.running = false; io.emit("transcode", { job: "*", phase: "done", detail: "all jobs finished" }); io.emit("prepare", { phase: "done" }); io.emit("board", { type: "board", reason: "transcode" }); }
+  });
+  // ── the Card Board itself, the promoter request, thumbnails
+  const thumbDir = join(cfg.dataDir ?? tmpdir(), "surface-thumbs"); mkdirSync(thumbDir, { recursive: true });
+  const thumbUrl = (abs: string) => `/api/thumb?f=${encodeURIComponent(abs)}`;
+  const board = () => buildBoard({ doc, cues, intake: lastIntake, mediaDir: lastIntake?.mediaDir, thumbUrl });
+  app.get("/api/board", (_q, res) => res.json(board()));
+  app.get("/api/board/request", (_q, res) => res.type("text/plain").send(promoterRequest(board(), doc)));
+  app.get("/api/thumb", async (q, res) => {
+    const f = String(q.query.f ?? ""); if (!f || !existsSync(f)) return res.status(404).end();
+    const st = statSyncFs(f); const key = createHash("sha1").update(`${f}|${st.size}|${st.mtimeMs}`).digest("hex"); const out = join(thumbDir, `${key}.jpg`);
+    if (!existsSync(out)) {
+      // one frame ~1 s in (animated cards have revealed their text by then), 264 px wide, flattened over black
+      const isStill = /\.(png|jpe?g|tif|webp)$/i.test(f);
+      const run = (args: string[]) => new Promise<void>((r) => execFile("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args, out], () => r()));
+      await run([...(isStill ? [] : ["-ss", "1.2"]), "-i", f, "-frames:v", "1", "-vf", "scale=264:-2:flags=area,format=yuv420p", "-q:v", "6"]);
+      if (!existsSync(out)) await run(["-i", f, "-frames:v", "1", "-vf", "scale=264:-2,format=yuv420p", "-q:v", "6"]);
+    }
+    if (!existsSync(out)) return res.status(404).end();
+    res.set("Cache-Control", "private, max-age=86400").sendFile(out);
+  });
+  // ── a newer sheet dropped on the open project: merge (fighter ids stay, graphics follow the fighter), keep the diff
+  app.post("/api/sheet", (q, res) => {
+    const text: string = typeof q.body === "string" ? q.body : q.body?.text; const file: string = q.body?.file ?? "sheet.txt"; if (!text) return res.status(400).json({ error: "text required" });
+    const r = parseSheet(text, file); if ("kind" in r && r.kind === "rundown") return res.status(422).json({ error: "that is a TV running order, not a bout/timing sheet" });
+    const inc = r as ShowDoc; const hasBouts = (doc.data.bouts ?? []).length > 0;
+    if (!hasBouts) {
+      const keep = { screens: doc.screens, surfaces: doc.surfaces, screenWords: (doc as any).screenWords, stingers: doc.stingers, transitions: doc.transitions, pack: (doc as any).pack };
+      const next = { ...inc, ...keep, event: { ...inc.event, ...(doc.event.name !== "Untitled show" ? { name: doc.event.name } : {}) }, versions: [{ file, at: new Date().toISOString(), diff: ["first sheet"] }] } as unknown as ShowDoc;
+      setShow(next); return res.json({ ok: true, diff: ["first sheet"], flags: next.review.flags });
+    }
+    const m = mergeSheets(doc, inc); (m.doc as any).versions = [...((doc as any).versions ?? []), { file, at: new Date().toISOString(), diff: m.diff }]; setShow(m.doc); res.json({ ok: true, diff: m.diff, flags: m.doc.review.flags });
+  });
+  // ── build the engine live (Resolume over REST); the author-only bundle stays at /api/bundle
+  app.post("/api/build/resolume", async (q, res) => {
+    const ra = adapters.find((a) => a.id === "resolume") as ResolumeAdapter | undefined; if (!ra) return res.status(400).json({ error: "no Resolume adapter in surface.config.json" });
+    const mediaRoot = q.body?.mediaRoot ?? lastIntake?.mediaDir ?? join(process.cwd(), "media"); const plan = resolumePlan(doc, cues, mediaRoot, q.body?.savePath ?? join(mediaRoot, "..", `${doc.event.id}.avc`));
+    try { const n = await ra.build(plan, (done, total, op) => io.emit("build", { engine: "resolume", done, total, op: op.op })); res.json({ ok: true, ops: n }); }
+    catch (e: any) { res.status(502).json({ error: e.message, hint: "Resolume Arena 7.8+ with Webserver enabled (Preferences → Webserver), on this machine or a reachable IP" }); }
+  });
+
   app.get("/api/transcode", (_q, res) => res.json({ running: transcodeRun.running, started: transcodeRun.started, recent: transcodeRun.events.slice(-50), result: transcodeRun.result }));
   // ── ShowCall / PixelMapper bridges and the author-only bundle
   app.get("/api/export/showcall", (_q, res) => res.json(toShowCall(doc, cues)));

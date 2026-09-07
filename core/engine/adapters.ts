@@ -2,7 +2,7 @@ import { createSocket, type Socket } from "node:dgram";
 import type { Cue, ShowDoc } from "../types.js";
 import { resolumeAddress, type AdapterStatus, type EngineAdapter, type EngineOp } from "./adapter.js";
 import { expandScope } from "../naming.js";
-import { stingerColumn } from "../gen/engines.js";
+import { stingerColumn, type ResolumeOp } from "../gen/engines.js";
 
 // ───────────────────────────────────────────── mock: records everything (tests, dry-run, "Author-only" preview)
 export class MockAdapter implements EngineAdapter {
@@ -54,6 +54,24 @@ export class ResolumeAdapter implements EngineAdapter {
     } catch (e: any) { this.ok = false; this.lastError = e.message; throw e; }
   }
   status(): AdapterStatus { return { id: this.id, connected: this.ok, latencyMs: this.latency, lastError: this.lastError, detail: this.base }; }
+  /** Execute a build plan (resolumePlan) live over REST — the same ops the generated python script runs. Idempotent. */
+  async build(plan: ResolumeOp[], onProgress?: (done: number, total: number, op: ResolumeOp) => void) {
+    const name = (path: string, n: string) => this.req("PUT", path, { name: { value: n } });
+    let done = 0;
+    for (const o of plan) {
+      switch (o.op) {
+        case "grow": await this.req("POST", "/composition/grow-to", { column_count: o.columns, layer_count: o.layers }); break;
+        case "addGroup": { const comp: any = await (await this.req("GET", "/composition")).json(); if (o.index > (comp.layergroups?.length ?? 0)) await this.req("POST", "/composition/layergroups/add"); await name(`/composition/layergroups/${o.index}`, o.name); break; }
+        case "renameLayer": await name(`/composition/layers/${o.index}`, o.name); break;
+        case "renameColumn": await name(`/composition/columns/${o.index}`, o.name); break;
+        case "openClip": await this.req("POST", `/composition/layers/${o.layer}/clips/${o.column}/open`, o.url); await name(`/composition/layers/${o.layer}/clips/${o.column}`, o.name); break;
+        case "clearClip": await this.req("POST", `/composition/layers/${o.layer}/clips/${o.column}/clear`); break;
+        case "save": await this.req("POST", "/composition/save", o.url); break;
+      }
+      onProgress?.(++done, plan.length, o);
+    }
+    return done;
+  }
   async close() {}
 }
 

@@ -19,7 +19,7 @@ function ensureDefaults() {
   const d = userDir(); fs.mkdirSync(d, { recursive: true });
   const show = path.join(d, "show.json"); const cfg = path.join(d, "surface.config.json");
   // first run only: the Glendale sample card becomes the first project (the server imports a loose show.json once)
-  if (!fs.existsSync(show) && !fs.existsSync(path.join(d, "projects")) && !fs.existsSync(`${show}.imported`)) fs.copyFileSync(path.join(__dirname, "..", "fixtures", "2026-06-13-glendale.bout.json"), show);
+  if (!fs.existsSync(show) && !fs.existsSync(path.join(d, "projects"))) fs.copyFileSync(path.join(__dirname, "..", "fixtures", "2026-06-13-glendale.bout.json"), show);
   if (!fs.existsSync(cfg)) fs.writeFileSync(cfg, JSON.stringify({ port: PORT, adapters: [{ type: "mock" }] }, null, 2));
   return { show, cfg };
 }
@@ -53,9 +53,9 @@ async function createWindow() {
 ipcMain.handle("pick-folder", async () => { const r = await dialog.showOpenDialog({ properties: ["openDirectory"] }); return r.canceled ? null : r.filePaths[0]; });
 
 // ── sheet import: pick a PDF/txt; PDFs go through pdftotext -layout (poppler) so the same parsers run as the CLI
-ipcMain.handle("read-sheet", async () => {
-  const r = await dialog.showOpenDialog({ filters: [{ name: "Bout / timing sheet", extensions: ["pdf", "txt"] }], properties: ["openFile"] }); if (r.canceled) return null;
-  const file = r.filePaths[0];
+ipcMain.handle("read-sheet", async (_ev, given) => {
+  let file = given;
+  if (!file) { const r = await dialog.showOpenDialog({ filters: [{ name: "Bout / timing sheet", extensions: ["pdf", "txt"] }], properties: ["openFile"] }); if (r.canceled) return null; file = r.filePaths[0]; }
   if (/\.pdf$/i.test(file)) { try { return { file: path.basename(file), text: execFileSync("pdftotext", ["-layout", file, "-"], { encoding: "utf8", maxBuffer: 64 << 20 }) }; } catch (e) { return { file: path.basename(file), error: "pdftotext not found — install poppler (choco install poppler) or export the sheet as text" }; } }
   return { file: path.basename(file), text: fs.readFileSync(file, "utf8") };
 });
